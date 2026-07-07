@@ -12,13 +12,13 @@ final class Credential
 {
     public function __construct(
         public readonly string $name,
-        public readonly string $plaintext,
+        #[\SensitiveParameter] public readonly string $plaintext,
         public readonly ?string $expiresAt = null,
     ) {}
 
     public static function make(
         string $name,
-        string $plaintext,
+        #[\SensitiveParameter] string $plaintext,
         ?string $expiresAt = null,
     ): self {
         return new self($name, $plaintext, $expiresAt);
