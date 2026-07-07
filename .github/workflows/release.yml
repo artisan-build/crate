@@ -9,7 +9,7 @@ on:
       - 'v*'
 
 # The built-in GITHUB_TOKEN only reaches this monorepo. Cross-repo pushes/tags to
-# the artisan-build/sink-* split repos use SPLIT_REPO_TOKEN (a fine-grained PAT
+# the artisan-build/crate-* split repos use SPLIT_REPO_TOKEN (a fine-grained PAT
 # scoped to those repos with Contents: write), wired in below.
 permissions:
   contents: read
