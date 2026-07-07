@@ -5,10 +5,25 @@
     "license": "MIT",
     "type": "library",
     "version": "1.0.0",
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../crate-contracts",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
     "require": {
-        "php": "^8.3"
+        "php": "^8.3",
+        "artisan-build/crate-contracts": "^1.0",
+        "illuminate/console": "^13.0",
+        "illuminate/contracts": "^13.0",
+        "illuminate/database": "^13.0",
+        "illuminate/support": "^13.0"
     },
     "require-dev": {
+        "orchestra/testbench": "^11.0",
         "pestphp/pest": "^4.0",
         "laravel/pint": "^1.27"
     },
@@ -19,6 +34,7 @@
     },
     "autoload-dev": {
         "psr-4": {
+            "ArtisanBuild\\CrateServer\\Database\\Factories\\": "database/factories/",
             "ArtisanBuild\\CrateServer\\Tests\\": "tests/"
         }
     },
@@ -31,6 +47,13 @@
         "sort-packages": true,
         "allow-plugins": {
             "pestphp/pest-plugin": true
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "ArtisanBuild\\CrateServer\\CrateServerServiceProvider"
+            ]
         }
     },
     "minimum-stability": "stable",
