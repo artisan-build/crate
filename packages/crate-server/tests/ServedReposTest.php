@@ -5,6 +5,7 @@ declare(strict_types=1);
 use ArtisanBuild\CrateContracts\RepoStatus;
 use ArtisanBuild\CrateContracts\RepoType;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -39,9 +40,10 @@ it('casts model fields and encrypts source credentials at rest', function (): vo
         ->and($fresh->status)->toBe(RepoStatus::Pending)
         ->and($fresh->type)->toBeInstanceOf(RepoType::class)
         ->and($fresh->type)->toBe(RepoType::Vcs)
-        ->and($fresh->last_built_at)->not->toBeNull()
+        ->and($fresh->last_built_at)->toBeInstanceOf(CarbonInterface::class)
         ->and($fresh->source_credential)->toBe('ghp_secretvalue')
-        ->and($raw->source_credential)->not->toBe('ghp_secretvalue');
+        ->and($raw->source_credential)->not->toBe('ghp_secretvalue')
+        ->and($fresh->toArray())->not->toHaveKey('source_credential');
 });
 
 it('adds a served repo from the console command', function (): void {

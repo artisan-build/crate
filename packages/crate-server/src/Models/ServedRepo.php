@@ -21,6 +21,11 @@ final class ServedRepo extends Model
     protected $guarded = [];
 
     /**
+     * @var list<string>
+     */
+    protected $hidden = ['source_credential'];
+
+    /**
      * @return array<string, string>
      */
     protected function casts(): array
