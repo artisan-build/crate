@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\CrateServer\Tests;
 
+use ArtisanBuild\BuiltForCloud\BuiltForCloudServiceProvider;
 use ArtisanBuild\CrateServer\CrateServerServiceProvider;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -25,6 +26,7 @@ abstract class TestCase extends Orchestra
     protected function getPackageProviders($app): array
     {
         return [
+            BuiltForCloudServiceProvider::class,
             CrateServerServiceProvider::class,
         ];
     }

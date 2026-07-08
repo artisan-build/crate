@@ -8,7 +8,9 @@ use ArtisanBuild\CrateServer\Commands\CrateBuildCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposAddCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposListCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposRemoveCommand;
+use ArtisanBuild\CrateServer\Http\Middleware\EnsureValidCredential;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
 final class CrateServerServiceProvider extends ServiceProvider
@@ -27,6 +29,12 @@ final class CrateServerServiceProvider extends ServiceProvider
         ], 'crate-server-config');
 
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+
+        if ($this->app->bound('router')) {
+            $this->app['router']->aliasMiddleware('crate-server.credential', EnsureValidCredential::class);
+        }
+
+        Route::middleware(['crate-server.credential'])->group(__DIR__.'/../routes/crate-server.php');
 
         if ($this->app->runningInConsole()) {
             $this->commands([
