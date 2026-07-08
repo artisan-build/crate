@@ -12,14 +12,14 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 final class CrateAuthCommand extends Command
 {
-    protected $signature = 'crate:auth {--path=auth.json}';
+    protected $signature = 'crate:auth {--print : Print the COMPOSER_AUTH JSON to stdout instead of writing auth.json} {--path=auth.json}';
 
     protected $description = 'Generate Composer auth for a Crate registry.';
 
     public function handle(): int
     {
         try {
-            if ($this->input->hasParameterOption('--env')) {
+            if ($this->option('print')) {
                 $this->getOutput()->writeln(Crate::composerAuthJson(), OutputInterface::OUTPUT_RAW);
 
                 return self::SUCCESS;

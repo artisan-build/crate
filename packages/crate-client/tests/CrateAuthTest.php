@@ -25,9 +25,27 @@ it('builds the composer auth json value', function (): void {
 });
 
 it('prints composer auth json for environment usage', function (): void {
-    $this->artisan('crate:auth --env')
+    $this->artisan('crate:auth --print')
         ->expectsOutput(Crate::composerAuthJson())
         ->assertSuccessful();
+});
+
+it('only prints secrets with the dedicated --print flag, never by default', function (): void {
+    $path = sys_get_temp_dir().'/crate-client-auth-'.bin2hex(random_bytes(8)).'.json';
+
+    try {
+        // Without --print the command writes the file and must NOT emit the secret JSON to stdout,
+        // so it can never leak the token when invoked with framework globals like --env=production.
+        $this->artisan('crate:auth', ['--path' => $path])
+            ->doesntExpectOutput(Crate::composerAuthJson())
+            ->assertSuccessful();
+
+        expect(file_exists($path))->toBeTrue();
+    } finally {
+        if (file_exists($path)) {
+            unlink($path);
+        }
+    }
 });
 
 it('writes composer auth json to disk', function (): void {
