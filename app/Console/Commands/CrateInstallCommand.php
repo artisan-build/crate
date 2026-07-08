@@ -110,11 +110,20 @@ final class CrateInstallCommand extends Command
 
     private function unquoteEnvValue(string $value): string
     {
-        if (str_starts_with($value, '"') && str_ends_with($value, '"')) {
-            return str_replace(['\\=', '\\n', '\\"', '\\\\'], ['=', "\n", '"', '\\'], substr($value, 1, -1));
+        if (strlen($value) < 2 || ! str_starts_with($value, '"') || ! str_ends_with($value, '"')) {
+            return $value;
         }
 
-        return $value;
+        // Reverse WritesInstallEnv::formatEnvironmentValue's escaping in a single left-to-right
+        // pass so an escaped backslash (\\) is never re-matched as part of a later sequence such
+        // as \n — otherwise a value like a Windows path round-trips incorrectly.
+        return (string) preg_replace_callback('/\\\\(.)/s', static fn (array $m): string => match ($m[1]) {
+            'n' => "\n",
+            '"' => '"',
+            '=' => '=',
+            '\\' => '\\',
+            default => $m[0],
+        }, substr($value, 1, -1));
     }
 
     /**

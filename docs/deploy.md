@@ -33,13 +33,21 @@ Ensure `git` is available anywhere Satis runs, including the build and queue run
 
 ## Configure
 
-Run the installer on the deployed environment:
+Run the installer on the deployed environment. Run it interactively (it prompts for each value, defaulting to any current value), or pass the flags for a non-interactive/automated deploy hook:
 
 ```bash
+# interactive
 php artisan crate:install
+
+# non-interactive (a bare crate:install with no TTY and no flags makes no changes)
+php artisan crate:install --no-interaction \
+  --url="https://crate.example.com" \
+  --archive-disk="crate-archive" \
+  --satis-path="$CRATE_SATIS_PATH" \
+  --credential-api=true
 ```
 
-The installer configures only these app values:
+The installer is idempotent and will not overwrite an existing value without confirmation (pass `--force` non-interactively). It configures only these app values:
 
 - `CRATE_URL`: the public Crate registry URL used as the Satis homepage and archive prefix.
 - `CRATE_ARCHIVE_DISK`: the object-storage filesystem disk name Crate should use for Satis output and mirrored archives.

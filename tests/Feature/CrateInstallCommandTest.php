@@ -117,6 +117,53 @@ it('writes answered values interactively', function (): void {
     ]);
 });
 
+it('preserves unrelated existing env keys', function (): void {
+    $path = crateTempEnv(implode(PHP_EOL, [
+        'APP_KEY=base64:existing',
+        'DB_CONNECTION=pgsql',
+        'QUEUE_CONNECTION=redis',
+        'CACHE_STORE=redis',
+        'FILESYSTEM_DISK=s3',
+        '',
+    ]));
+
+    $this->artisan('crate:install', [
+        '--no-interaction' => true,
+        '--path' => $path,
+        '--url' => 'https://crate.example.com',
+    ])->assertSuccessful();
+
+    $values = crateReadEnv($path);
+
+    expect($values)->toMatchArray([
+        'APP_KEY' => 'base64:existing',
+        'DB_CONNECTION' => 'pgsql',
+        'QUEUE_CONNECTION' => 'redis',
+        'CACHE_STORE' => 'redis',
+        'FILESYSTEM_DISK' => 's3',
+        'CRATE_URL' => 'https://crate.example.com',
+    ]);
+});
+
+it('round-trips a backslash-bearing value idempotently', function (): void {
+    $path = crateTempEnv();
+
+    $arguments = [
+        '--no-interaction' => true,
+        '--path' => $path,
+        '--satis-path' => 'C:\\newdir\\satis',
+    ];
+
+    $this->artisan('crate:install', $arguments)->assertSuccessful();
+
+    // The second run must recognise the stored value as unchanged (proving the escaped
+    // backslash round-trips), not warn about keeping an existing value.
+    $this->artisan('crate:install', $arguments)
+        ->doesntExpectOutput('Kept existing CRATE_SATIS_PATH; pass --force to overwrite.')
+        ->expectsOutput('Crate is already configured; no changes.')
+        ->assertSuccessful();
+});
+
 it('writes a false credential api toggle', function (): void {
     $path = crateTempEnv();
 
