@@ -1,0 +1,63 @@
+<?php
+
+declare(strict_types=1);
+
+namespace ArtisanBuild\CrateServer;
+
+use ArtisanBuild\CrateServer\Commands\CrateReposAddCommand;
+use ArtisanBuild\CrateServer\Commands\CrateReposListCommand;
+use ArtisanBuild\CrateServer\Commands\CrateReposRemoveCommand;
+use Illuminate\Support\ServiceProvider;
+
+final class CrateServerServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        $this->mergeConfigFrom(__DIR__.'/../config/crate-server.php', CrateServer::CONFIG_KEY);
+
+        $this->registerCrateConnection();
+    }
+
+    public function boot(): void
+    {
+        $this->publishes([
+            __DIR__.'/../config/crate-server.php' => config_path('crate-server.php'),
+        ], 'crate-server-config');
+
+        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                CrateReposAddCommand::class,
+                CrateReposListCommand::class,
+                CrateReposRemoveCommand::class,
+            ]);
+        }
+    }
+
+    private function registerCrateConnection(): void
+    {
+        $crateDatabase = config('crate-server.database.database');
+        $crateHost = config('crate-server.database.host');
+        $crateUsername = config('crate-server.database.username');
+
+        if (blank($crateDatabase) && blank($crateHost) && blank($crateUsername)) {
+            config(['database.connections.crate' => config('database.connections.'.config('database.default'))]);
+
+            return;
+        }
+
+        config(['database.connections.crate' => [
+            'driver' => 'pgsql',
+            'host' => config('crate-server.database.host'),
+            'port' => config('crate-server.database.port'),
+            'database' => config('crate-server.database.database'),
+            'username' => config('crate-server.database.username'),
+            'password' => config('crate-server.database.password'),
+            'charset' => 'utf8',
+            'prefix' => '',
+            'search_path' => 'public',
+            'timezone' => 'UTC',
+        ]]);
+    }
+}
