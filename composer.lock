@@ -7,21 +7,94 @@
     "content-hash": "0f9666e7c5488562bfef8b88b177acc9",
     "packages": [
         {
+            "name": "artisan-build/built-for-cloud",
+            "version": "v0.2.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/artisan-build/built-for-cloud.git",
+                "reference": "685a87d03b257d3d59bcd3833e62b719439f97ff"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/artisan-build/built-for-cloud/zipball/685a87d03b257d3d59bcd3833e62b719439f97ff",
+                "reference": "685a87d03b257d3d59bcd3833e62b719439f97ff",
+                "shasum": ""
+            },
+            "require": {
+                "illuminate/auth": "^13.0",
+                "illuminate/console": "^13.0",
+                "illuminate/contracts": "^13.0",
+                "illuminate/database": "^13.0",
+                "illuminate/process": "^13.0",
+                "illuminate/routing": "^13.0",
+                "illuminate/support": "^13.0",
+                "php": "^8.3"
+            },
+            "require-dev": {
+                "larastan/larastan": "^3.9",
+                "laravel/pint": "^1.27",
+                "orchestra/testbench": "^11.0",
+                "pestphp/pest": "^4.0"
+            },
+            "type": "library",
+            "extra": {
+                "laravel": {
+                    "providers": [
+                        "ArtisanBuild\\BuiltForCloud\\BuiltForCloudServiceProvider"
+                    ]
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "ArtisanBuild\\BuiltForCloud\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "description": "Shared building blocks for administering cloud-first Laravel apps from the Laravel Cloud CLI.",
+            "keywords": [
+                "api-tokens",
+                "artisan-build",
+                "laravel",
+                "laravel-cloud"
+            ],
+            "support": {
+                "issues": "https://github.com/artisan-build/built-for-cloud/issues",
+                "source": "https://github.com/artisan-build/built-for-cloud/tree/v0.2.0"
+            },
+            "time": "2026-07-08T08:45:38+00:00"
+        },
+        {
             "name": "artisan-build/crate-client",
             "version": "1.0.0",
             "dist": {
                 "type": "path",
                 "url": "packages/crate-client",
-                "reference": "710b766adb8619fad9a5e11d3c52a6068998758d"
+                "reference": "84925c01dcc37ee8a0ec0dbf6d4e71817ca3b785"
             },
             "require": {
+                "artisan-build/crate-contracts": "^1.0",
+                "illuminate/console": "^13.0",
+                "illuminate/contracts": "^13.0",
+                "illuminate/http": "^13.0",
+                "illuminate/support": "^13.0",
                 "php": "^8.3"
             },
             "require-dev": {
                 "laravel/pint": "^1.27",
+                "orchestra/testbench": "^11.0",
                 "pestphp/pest": "^4.0"
             },
             "type": "library",
+            "extra": {
+                "laravel": {
+                    "providers": [
+                        "ArtisanBuild\\CrateClient\\CrateClientServiceProvider"
+                    ]
+                }
+            },
             "autoload": {
                 "psr-4": {
                     "ArtisanBuild\\CrateClient\\": "src/"
@@ -118,14 +191,20 @@
             "dist": {
                 "type": "path",
                 "url": "packages/crate-server",
-                "reference": "dead4a6a9b0ce47f06928e9b541f98063e1f4bdf"
+                "reference": "708bdc14e219170ed9e9d03c1223a85a71589d78"
             },
             "require": {
+                "artisan-build/built-for-cloud": "^0.2",
                 "artisan-build/crate-contracts": "^1.0",
+                "illuminate/bus": "^13.0",
                 "illuminate/console": "^13.0",
                 "illuminate/contracts": "^13.0",
                 "illuminate/database": "^13.0",
+                "illuminate/filesystem": "^13.0",
+                "illuminate/process": "^13.0",
+                "illuminate/queue": "^13.0",
                 "illuminate/support": "^13.0",
+                "laravel/framework": "^13.0",
                 "php": "^8.3"
             },
             "require-dev": {
