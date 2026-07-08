@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\CrateServer;
 
+use ArtisanBuild\CrateServer\Commands\CrateBuildCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposAddCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposListCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposRemoveCommand;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
 
 final class CrateServerServiceProvider extends ServiceProvider
@@ -28,11 +30,16 @@ final class CrateServerServiceProvider extends ServiceProvider
 
         if ($this->app->runningInConsole()) {
             $this->commands([
+                CrateBuildCommand::class,
                 CrateReposAddCommand::class,
                 CrateReposListCommand::class,
                 CrateReposRemoveCommand::class,
             ]);
         }
+
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command('crate:build --trigger=schedule')->daily();
+        });
     }
 
     private function registerCrateConnection(): void

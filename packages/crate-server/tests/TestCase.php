@@ -50,5 +50,9 @@ abstract class TestCase extends Orchestra
             'username' => null,
             'password' => null,
         ]);
+        $app['config']->set('crate-server.url', 'https://crate.test');
+        $app['config']->set('crate-server.archive_disk', 'crate-archive');
+        $app['config']->set('crate-server.satis_path', '/fake/vendor/bin/satis');
+        $app['config']->set('crate-server.output_dir', 'satis');
     }
 }
