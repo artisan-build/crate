@@ -2,4 +2,6 @@
 
 declare(strict_types=1);
 
-uses()->in(__DIR__);
+use ArtisanBuild\CrateClient\Tests\TestCase;
+
+uses(TestCase::class)->in(__DIR__);
