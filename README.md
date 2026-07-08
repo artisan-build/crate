@@ -8,6 +8,10 @@ Crate is single-tenant by construction. Each deployment lives in your own Larave
 
 Crate is MIT licensed.
 
+## Deploying
+
+See [`docs/deploy.md`](docs/deploy.md) for the Laravel Cloud deployment guide, including resource provisioning, `crate:install`, first-run commands, and customer-app consumption.
+
 ## What Ships
 
 - `artisan-build/crate-contracts`: framework-free DTOs and enums shared by the client and server packages.
