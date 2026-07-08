@@ -53,6 +53,10 @@ final class BuildSatis implements ShouldQueue
             File::put($authPath, json_encode($generator->authConfig(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             File::ensureDirectoryExists($outputDir);
 
+            if ($this->package !== null) {
+                $this->seedOutputFromArchive($outputDir);
+            }
+
             $result = Process::path($tempDir)
                 ->env(['COMPOSER_HOME' => $tempDir])
                 ->run([
@@ -90,6 +94,25 @@ final class BuildSatis implements ShouldQueue
         } finally {
             File::delete($authPath);
             File::deleteDirectory($tempDir);
+        }
+    }
+
+    private function seedOutputFromArchive(string $outputDir): void
+    {
+        $disk = Storage::disk((string) config('crate-server.archive_disk'));
+        $prefix = trim((string) config('crate-server.output_dir'), '/');
+
+        foreach ($disk->allFiles($prefix) as $path) {
+            $relativePath = $prefix === '' ? $path : preg_replace('#^'.preg_quote($prefix, '#').'/#', '', $path);
+
+            if (! is_string($relativePath) || $relativePath === '') {
+                continue;
+            }
+
+            $target = $outputDir.'/'.$relativePath;
+
+            File::ensureDirectoryExists(dirname($target));
+            File::put($target, $disk->get($path));
         }
     }
 

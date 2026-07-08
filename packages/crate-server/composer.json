@@ -24,7 +24,8 @@
         "illuminate/filesystem": "^13.0",
         "illuminate/process": "^13.0",
         "illuminate/queue": "^13.0",
-        "illuminate/support": "^13.0"
+        "illuminate/support": "^13.0",
+        "laravel/framework": "^13.0"
     },
     "require-dev": {
         "orchestra/testbench": "^11.0",

@@ -54,6 +54,32 @@ it('records an incremental build against the served repo', function (): void {
         ->and($build->served_repo_id)->toBe($repo->getKey());
 });
 
+it('seeds incremental builds from the existing archive output before mirroring', function (): void {
+    Storage::fake('crate-archive');
+    Storage::disk('crate-archive')->put('satis/packages.json', json_encode([
+        'packages' => [
+            'other/pkg' => [],
+        ],
+    ], JSON_THROW_ON_ERROR));
+    ServedRepo::factory()->create(['name' => 'vendor/package']);
+
+    Process::fake(function (PendingProcess $process) {
+        $path = $process->path.'/output/packages.json';
+        $packages = json_decode(File::get($path), true, flags: JSON_THROW_ON_ERROR);
+        $packages['packages']['vendor/package'] = [];
+
+        File::put($path, json_encode($packages, JSON_THROW_ON_ERROR));
+
+        return Process::result('satis built');
+    });
+
+    (new BuildSatis('vendor/package'))->handle(app(SatisConfigGenerator::class));
+
+    $packages = json_decode(Storage::disk('crate-archive')->get('satis/packages.json'), true, flags: JSON_THROW_ON_ERROR);
+
+    expect($packages['packages'])->toHaveKeys(['other/pkg', 'vendor/package']);
+});
+
 it('records a failed build for a failed process result', function (): void {
     Storage::fake('crate-archive');
     ServedRepo::factory()->create(['name' => 'vendor/package']);
@@ -85,3 +111,25 @@ it('redacts source credentials before persisting process output', function (): v
     expect($build->output)->not->toContain('ghp_secretvalue')
         ->and($build->output)->toContain('***');
 });
+
+it('deletes temporary auth json after successful and failed builds', function (int $exitCode): void {
+    Storage::fake('crate-archive');
+    ServedRepo::factory()->create([
+        'name' => 'vendor/package',
+        'source_credential' => 'ghp_secretvalue',
+    ]);
+    $authPath = null;
+
+    Process::fake(function (PendingProcess $process) use (&$authPath, $exitCode) {
+        $authPath = $process->path.'/auth.json';
+
+        expect(File::get($authPath))->toContain('ghp_secretvalue');
+
+        return Process::result('satis output', '', $exitCode);
+    });
+
+    app(BuildSatis::class)->handle(app(SatisConfigGenerator::class));
+
+    expect($authPath)->toBeString()
+        ->and(File::exists($authPath))->toBeFalse();
+})->with([0, 1]);
