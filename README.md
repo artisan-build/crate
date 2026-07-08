@@ -19,7 +19,7 @@ Crate is headless. There is no admin web UI in this release.
 
 ## Test Drive
 
-After deploying the app and provisioning Laravel Cloud resources, run the operator flow on the Crate environment:
+After deploying the app and provisioning Laravel Cloud resources, run the operator flow against your deployed Crate environment:
 
 ```bash
 php artisan crate:repos:add vendor/pkg https://github.com/vendor/pkg.git --source-token=...
@@ -27,7 +27,7 @@ php artisan crate:build
 php artisan token:create ci --abilities=admin
 ```
 
-`crate:repos:add` stores the served package and encrypts the source credential. `crate:build` generates `satis.json` from the database and dispatches the Satis build job. The build writes Composer metadata and mirrored dist archives to the configured storage disk, served back through Crate rather than public object-storage URLs.
+`crate:repos:add` stores the served package and encrypts the source credential. `crate:build` generates `satis.json` from the database and dispatches the Satis build job. The build writes Composer metadata and mirrored dist archives to the configured storage disk, served back through Crate rather than public object-storage URLs. `token:create` dispatches to the target environment through the Cloud CLI; add `--execute` to run it directly on the environment (for example from a Cloud SSH session).
 
 Use the admin token from `token:create --abilities=admin` to issue customer credentials:
 
@@ -44,10 +44,10 @@ You can also issue, list, and revoke credentials from another Laravel app with `
 In the customer app, install `artisan-build/crate-client`, configure Composer to use the Crate registry, set the credential, and write Composer auth:
 
 ```bash
-composer config repositories.crate composer "$CRATE_URL"
-
 export CRATE_URL="https://crate.example.com"
 export CRATE_TOKEN="the-issued-credential"
+
+composer config repositories.crate composer "$CRATE_URL"
 
 php artisan crate:auth
 composer require vendor/pkg
