@@ -16,11 +16,15 @@ final class RegistryFileController
 
     public function provider(string $path): StreamedResponse
     {
+        abort_if(str_contains($path, '..'), 404);
+
         return $this->serve('p2/'.ltrim($path, '/'));
     }
 
     public function dist(string $path): StreamedResponse
     {
+        abort_if(str_contains($path, '..'), 404);
+
         return $this->serve('dist/'.ltrim($path, '/'));
     }
 

@@ -70,3 +70,17 @@ it('returns a 404 for a missing file with a valid credential', function (): void
     crateServerAuthenticatedGet('/p2/vendor/missing.json', 'valid-secret')
         ->assertNotFound();
 });
+
+it('rejects traversal attempts before reading dist storage paths', function (): void {
+    crateServerStoreToken('valid-secret');
+
+    crateServerAuthenticatedGet('/dist/../../secret', 'valid-secret')
+        ->assertNotFound();
+});
+
+it('rejects traversal attempts before reading provider storage paths', function (): void {
+    crateServerStoreToken('valid-secret');
+
+    crateServerAuthenticatedGet('/p2/../../secret', 'valid-secret')
+        ->assertNotFound();
+});
