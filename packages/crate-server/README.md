@@ -76,7 +76,7 @@ Environment variables:
 
 - `CRATE_URL`: public registry URL used by Satis metadata and dist archive URLs.
 - `CRATE_ARCHIVE_DISK`: storage disk for generated metadata and mirrored archives. Defaults to `FILESYSTEM_DISK` then `local`.
-- `CRATE_SATIS_PATH`: isolated Satis binary path. Defaults to `vendor/bin/satis`.
+- `CRATE_SATIS_PATH`: path to the isolated Satis executable (`<install-dir>/bin/satis`), executed directly by `BuildSatis`. Defaults to `vendor/bin/satis`, which only applies if Satis is installed into the app's own vendor tree — isolated installs (recommended; install via `composer create-project composer/satis:dev-main`) must set it explicitly.
 - `CRATE_OUTPUT_DIR`: storage prefix for generated registry output. Defaults to `satis`.
 - `CRATE_DB_*`: optional separate database connection settings. If omitted, the app's default database connection is reused as `crate`.
 

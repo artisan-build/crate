@@ -24,10 +24,22 @@ Install the app dependencies, then install Satis as an isolated tool with its ow
 
 ```bash
 composer install --no-dev --prefer-dist
-composer create-project composer/satis "$CRATE_SATIS_PATH" --no-dev
+composer create-project composer/satis:dev-main ../satis-tool --no-dev
 ```
 
-Do not `composer require` Satis into the Crate app. It must stay isolated because its dependency tree is separate from the Laravel app's dependency tree.
+Pin `dev-main` explicitly. Satis has no recent stable tag, so an unpinned `composer create-project composer/satis` resolves to satis 1.0.0 and fails on any modern runtime with:
+
+```
+Cannot use composer/satis's latest version 1.0.0 as it requires php ^5.6 || ^7.0 which is not satisfied by your platform.
+```
+
+Note the two distinct paths involved. The `create-project` target (`../satis-tool` above) is the install *directory*; the Satis *executable* lands inside it at `../satis-tool/bin/satis` (Composer does not link a root package's bin into `vendor/bin`). `CRATE_SATIS_PATH` must point at the executable, not the install directory — Crate's build job runs that path directly:
+
+```bash
+CRATE_SATIS_PATH=../satis-tool/bin/satis   # prefer an absolute path in real deploys
+```
+
+Do not `composer require` Satis into the Crate app. It must stay isolated because its dependency tree is separate from the Laravel app's dependency tree. Because Satis lives outside the app, the config default for `CRATE_SATIS_PATH` (`vendor/bin/satis`, which would only exist if Satis were required into the app) never applies — an isolated deploy must always set `CRATE_SATIS_PATH` explicitly.
 
 Ensure `git` is available anywhere Satis runs, including the build and queue runtimes. Satis uses it to read VCS repositories during registry builds.
 
@@ -40,10 +52,12 @@ Run the installer on the deployed environment. Run it interactively (it prompts 
 php artisan crate:install
 
 # non-interactive (a bare crate:install with no TTY and no flags makes no changes)
+# --satis-path is the Satis EXECUTABLE inside the isolated install from the
+# Build Command step, not the install directory
 php artisan crate:install --no-interaction \
   --url="https://crate.example.com" \
   --archive-disk="crate-archive" \
-  --satis-path="$CRATE_SATIS_PATH" \
+  --satis-path="/path/to/satis-tool/bin/satis" \
   --credential-api=true
 ```
 
@@ -51,7 +65,7 @@ The installer is idempotent and will not overwrite an existing value without con
 
 - `CRATE_URL`: the public Crate registry URL used as the Satis homepage and archive prefix.
 - `CRATE_ARCHIVE_DISK`: the object-storage filesystem disk name Crate should use for Satis output and mirrored archives.
-- `CRATE_SATIS_PATH`: the path to the isolated Satis binary or installation.
+- `CRATE_SATIS_PATH`: the path to the isolated Satis executable (`<install-dir>/bin/satis`), which the build job executes directly. The config default (`vendor/bin/satis`) only applies if Satis is installed into the app's own vendor directory — which the Build Command section advises against — so isolated deploys must set this explicitly.
 - `BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED`: whether built-for-cloud's admin-token credential API is enabled.
 
 Then run migrations:
