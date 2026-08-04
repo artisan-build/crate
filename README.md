@@ -72,8 +72,8 @@ The app publishes `config/built-for-cloud.php` and enables the credential API by
 
 Crate-specific server config lives in `config/crate-server.php`:
 
-- `CRATE_URL`: the public registry URL used as Satis `homepage` and archive prefix.
-- `CRATE_ARCHIVE_DISK`: disk for Composer metadata and mirrored dist archives.
+- `CRATE_URL`: the public registry URL used as Satis `homepage` and archive prefix. Must be set before the first `crate:build` — when unset, the generated `satis.json` fails Satis' schema validation and the whole build errors with `The json config file does not match the expected JSON schema`.
+- `CRATE_ARCHIVE_DISK`: disk for Composer metadata and mirrored dist archives. On Laravel Cloud the default (the environment's `FILESYSTEM_DISK`, wired to the `private` object-storage disk) works.
 - `CRATE_SATIS_PATH`: path to the isolated Satis executable (`<install-dir>/bin/satis`), run directly by the build job. Install Satis with `composer create-project composer/satis:dev-main` (an unpinned install resolves to the ancient 1.0.0 stable and fails on modern PHP). The default (`vendor/bin/satis`) only applies if Satis is installed into the app's vendor directory, which is discouraged — isolated deploys must set this explicitly. See `docs/deploy.md`.
 - `CRATE_OUTPUT_DIR`: storage prefix for generated registry output.
 
