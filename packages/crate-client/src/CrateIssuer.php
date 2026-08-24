@@ -65,9 +65,17 @@ final class CrateIssuer
         return collect($credentials);
     }
 
+    /**
+     * Every issuer call goes to the customer's own Crate server, so the BfC
+     * client identity rides along here: it labels which install made the
+     * request without the control plane reading the customer's env vars. It
+     * is an identifier, never a credential — the admin token below is still
+     * the only thing that grants anything.
+     */
     private function request(): PendingRequest
     {
-        return Http::baseUrl(rtrim($this->baseUrl, '/'))
+        return Http::withClientIdentity()
+            ->baseUrl(rtrim($this->baseUrl, '/'))
             ->withToken($this->adminToken)
             ->acceptJson()
             ->retry($this->retries, $this->retrySleepMs);
