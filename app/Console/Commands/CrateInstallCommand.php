@@ -38,7 +38,7 @@ final class CrateInstallCommand extends Command
         'CRATE_SATIS_PATH' => [
             'option' => 'satis-path',
             'prompt' => 'Satis binary path',
-            'default' => 'vendor/bin/satis',
+            'default' => 'satis-tool/bin/satis',
         ],
         'BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED' => [
             'option' => 'credential-api',
