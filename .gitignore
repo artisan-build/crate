@@ -3,6 +3,7 @@
 /public/fonts-manifest.dev.json
 /public/hot
 /public/storage
+/satis-tool
 /storage/*.key
 /storage/pail
 /vendor

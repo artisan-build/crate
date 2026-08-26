@@ -12,6 +12,14 @@ Crate is MIT licensed.
 
 See [`docs/deploy.md`](docs/deploy.md) for the Laravel Cloud deployment guide, including resource provisioning, `crate:install`, first-run commands, and customer-app consumption.
 
+Crate runs Satis as an isolated tool, so the deploy has to install one. Put `php artisan crate:install-satis` in the build command:
+
+```bash
+composer install --no-dev --prefer-dist && php artisan crate:install-satis
+```
+
+It installs `composer/satis:dev-main` into `satis-tool/` — a separate Composer project with its own dependency tree, never required into the app's `vendor/` — and the `CRATE_SATIS_PATH` default already points at the executable it produces. It must run at build time: on Laravel Cloud only build-time filesystem writes persist into the deploy artifact.
+
 ## What Ships
 
 - `artisan-build/crate-contracts`: framework-free DTOs and enums shared by the client and server packages.
@@ -74,7 +82,7 @@ Crate-specific server config lives in `config/crate-server.php`:
 
 - `CRATE_URL`: the public registry URL used as Satis `homepage` and archive prefix. Must be set before the first `crate:build` — when unset, the generated `satis.json` fails Satis' schema validation and the whole build errors with `The json config file does not match the expected JSON schema`.
 - `CRATE_ARCHIVE_DISK`: disk for Composer metadata and mirrored dist archives. On Laravel Cloud the default (the environment's `FILESYSTEM_DISK`, wired to the `private` object-storage disk) works.
-- `CRATE_SATIS_PATH`: path to the isolated Satis executable (`<install-dir>/bin/satis`), run directly by the build job. Install Satis with `composer create-project composer/satis:dev-main` (an unpinned install resolves to the ancient 1.0.0 stable and fails on modern PHP). The default (`vendor/bin/satis`) only applies if Satis is installed into the app's vendor directory, which is discouraged — isolated deploys must set this explicitly. See `docs/deploy.md`.
+- `CRATE_SATIS_PATH`: path to the isolated Satis executable (`<install-dir>/bin/satis`), run directly by the build job. Run `php artisan crate:install-satis` to install it; the default (`base_path('satis-tool/bin/satis')`) is where that command puts it, so a deploy that runs the command needs no value here. `satis-tool/` has its own dependency tree and is not part of the app's vendor tree, which is the isolation that matters. See `docs/deploy.md`.
 - `CRATE_OUTPUT_DIR`: storage prefix for generated registry output.
 
 Do not hand-set Laravel Cloud managed resource credentials for database, queue, cache, or object storage. Let Cloud inject them.

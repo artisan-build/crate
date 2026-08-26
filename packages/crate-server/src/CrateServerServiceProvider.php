@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanBuild\CrateServer;
 
 use ArtisanBuild\CrateServer\Commands\CrateBuildCommand;
+use ArtisanBuild\CrateServer\Commands\CrateInstallSatisCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposAddCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposListCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposRemoveCommand;
@@ -39,6 +40,7 @@ final class CrateServerServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 CrateBuildCommand::class,
+                CrateInstallSatisCommand::class,
                 CrateReposAddCommand::class,
                 CrateReposListCommand::class,
                 CrateReposRemoveCommand::class,

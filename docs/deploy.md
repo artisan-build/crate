@@ -20,36 +20,47 @@ Cardinal rule: never hand-set Cloud-injected resource environment variables. Lar
 
 ## Build Command
 
-Install the app dependencies, then install Satis as an isolated tool with its own dependency tree:
+Satis must be installed at **build** time. On Laravel Cloud only build-time filesystem writes persist — they land in the deploy artifact shipped to every instance, web and worker. Deploy and post-deploy writes touch one instance's ephemeral disk and are gone on the next deploy, so they cannot be used to install Satis.
+
+Set the build command to install the app dependencies, then Satis:
 
 ```bash
-composer install --no-dev --prefer-dist
+composer install --no-dev --prefer-dist && php artisan crate:install-satis
+```
+
+`crate:install-satis` runs `composer create-project composer/satis:dev-main <base_path>/satis-tool --no-dev`. Artisan is available at this point because the dependency install runs first — on Laravel Cloud, Scalpels prepends `composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader` to every manifest build step, so `vendor/` already exists.
+
+The command is idempotent: if the executable is already there it reports that and exits successfully without reinstalling. Pass `--force` to reinstall, `--dir=` to install somewhere other than `satis-tool`.
+
+**No `CRATE_SATIS_PATH` is needed.** `crate-server.satis_path` defaults to `base_path('satis-tool/bin/satis')`, which is exactly where the command installs the executable. Set the variable only if you install Satis somewhere else.
+
+Satis still gets its own isolated dependency tree: `satis-tool/` is a separate Composer project with its own `composer.json` and `composer.lock`. What matters is that Satis is not required into the app's `vendor/`, not that it lives outside the project directory.
+
+Two details the command exists to get right, and which still apply if you install Satis by hand:
+
+- **Pin `dev-main`.** Satis has no recent stable tag, so an unpinned `composer create-project composer/satis` resolves to satis 1.0.0 and fails on any modern runtime with:
+
+  ```
+  Cannot use composer/satis's latest version 1.0.0 as it requires php ^5.6 || ^7.0 which is not satisfied by your platform.
+  ```
+
+- **The install directory and the executable are different paths.** The `create-project` target is the install *directory*; the Satis *executable* lands inside it at `<install-dir>/bin/satis` (Composer does not link a root package's bin into `vendor/bin`). Passing the executable path as the `create-project` target nests it one level too deep (`.../bin/satis/bin/satis`) and the app then tries to execute a directory. `CRATE_SATIS_PATH`, if you set it, must point at the executable.
+
+If you install Satis by hand on a traditional/VM deploy, hardcode a fixed absolute install directory rather than deriving it from `$CRATE_SATIS_PATH`:
+
+```bash
 composer create-project composer/satis:dev-main /var/www/satis-tool --no-dev
-```
-
-Pin `dev-main` explicitly. Satis has no recent stable tag, so an unpinned `composer create-project composer/satis` resolves to satis 1.0.0 and fails on any modern runtime with:
-
-```
-Cannot use composer/satis's latest version 1.0.0 as it requires php ^5.6 || ^7.0 which is not satisfied by your platform.
-```
-
-Note the two distinct paths involved. The `create-project` target (`/var/www/satis-tool` above) is the install *directory*; the Satis *executable* lands inside it at `/var/www/satis-tool/bin/satis` (Composer does not link a root package's bin into `vendor/bin`). `CRATE_SATIS_PATH` must point at the executable, not the install directory — Crate's build job runs that path directly:
-
-```bash
 CRATE_SATIS_PATH=/var/www/satis-tool/bin/satis
 ```
 
-Hardcode a fixed absolute install directory in the build command rather than deriving it from `$CRATE_SATIS_PATH`:
-
-- Do not pass `"$CRATE_SATIS_PATH"` as the `create-project` target. It is the *binary* path, so using it as the install directory nests the executable one level too deep (`.../bin/satis/bin/satis`) and the app then tries to execute a directory.
 - On Laravel Cloud, `$CRATE_SATIS_PATH` is not reliably exported to the build or runtime shell anyway — Cloud injects environment variables into Laravel's environment, not the shell.
-- The path must be absolute because the build job runs Satis with its working directory set to a temporary build directory; a relative `satis_path` resolves against that temp dir and breaks.
+- The path must be absolute because the build job runs Satis with its working directory set to a temporary build directory; a relative `satis_path` resolves against that temp dir and breaks. `base_path()` is absolute, so the default already satisfies this.
 
 Confirmed working on Laravel Cloud: Satis 3.0.0-dev on PHP 8.5.
 
-Do not `composer require` Satis into the Crate app. It must stay isolated because its dependency tree is separate from the Laravel app's dependency tree. Because Satis lives outside the app, the config default for `CRATE_SATIS_PATH` (`vendor/bin/satis`, which would only exist if Satis were required into the app) never applies — an isolated deploy must always set `CRATE_SATIS_PATH` explicitly.
+Do not `composer require` Satis into the Crate app. Its dependency tree must stay separate from the Laravel app's.
 
-Ensure `git` is available anywhere Satis runs, including the build and queue runtimes. Satis uses it to read VCS repositories during registry builds.
+Ensure `git` is available anywhere Satis runs, including the build and queue runtimes. Satis uses it to read VCS repositories during registry builds. (`crate:install-satis` itself installs from dist archives and does not need git.)
 
 ## Configure
 
@@ -65,12 +76,13 @@ If you see that error, check `CRATE_URL` first.
 
 ### On Laravel Cloud
 
-Set `CRATE_URL`, `CRATE_ARCHIVE_DISK`, and `CRATE_SATIS_PATH` as Cloud environment variables — in the dashboard, or via the Cloud CLI:
+Set `CRATE_URL` as a Cloud environment variable — in the dashboard, or via the Cloud CLI:
 
 ```bash
 cloud environment:variables <env> --action=set --key=CRATE_URL --value=https://crate.example.com
-cloud environment:variables <env> --action=set --key=CRATE_SATIS_PATH --value=/var/www/satis-tool/bin/satis
 ```
+
+`CRATE_SATIS_PATH` needs no value when the build command runs `crate:install-satis`; the config default already points at what it installed.
 
 Do not use `crate:install` on Laravel Cloud: it writes `.env`, and `.env` changes do not persist there — the environment is Cloud-managed.
 
@@ -98,7 +110,7 @@ The installer is idempotent and will not overwrite an existing value without con
 
 - `CRATE_URL`: the public Crate registry URL used as the Satis homepage and archive prefix.
 - `CRATE_ARCHIVE_DISK`: the object-storage filesystem disk name Crate should use for Satis output and mirrored archives.
-- `CRATE_SATIS_PATH`: the path to the isolated Satis executable (`<install-dir>/bin/satis`), which the build job executes directly. The config default (`vendor/bin/satis`) only applies if Satis is installed into the app's own vendor directory — which the Build Command section advises against — so isolated deploys must set this explicitly.
+- `CRATE_SATIS_PATH`: the path to the isolated Satis executable (`<install-dir>/bin/satis`), which the build job executes directly. The config default is `base_path('satis-tool/bin/satis')`, where `crate:install-satis` installs it — set this only when Satis lives elsewhere, as it does in the hand-rolled VM install above.
 - `BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED`: whether built-for-cloud's admin-token credential API is enabled.
 
 Then run migrations:
@@ -109,7 +121,7 @@ php artisan migrate --force
 
 ## First Run
 
-The order matters. Configure first (`CRATE_URL`, `CRATE_ARCHIVE_DISK`, `CRATE_SATIS_PATH`), then migrate, then register repositories, then build. Running `crate:build` before `CRATE_URL` is set fails with the JSON-schema error described in Configure.
+The order matters. Configure first (`CRATE_URL`, and `CRATE_ARCHIVE_DISK` / `CRATE_SATIS_PATH` if you are not using their defaults), then migrate, then register repositories, then build. Running `crate:build` before `CRATE_URL` is set fails with the JSON-schema error described in Configure.
 
 Create an admin token for the credential API and issuer SDK:
 
