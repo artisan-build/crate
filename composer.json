@@ -12,6 +12,7 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
+        "artisan-build/built-for-cloud": "^0.4",
         "artisan-build/crate-client": "*",
         "artisan-build/crate-contracts": "*",
         "artisan-build/crate-server": "*",
