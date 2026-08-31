@@ -78,12 +78,21 @@ authoritative build spec lives at `docs/crate-build-handover.md` (to be written 
 - ≥2 concurrent CODE agents MUST each get their own git worktree (shared checkout commingles
   changes / fights over HEAD). One worktree per PR.
 
-## Harness map (role → runtime; decorrelate by ROLE/FRAMING, not model lineage)
-- Only **Claude (agent_tool_id 3)** and **OpenCode (agent_tool_id 2)** run reliably in this Solo env.
-- implementer: OpenCode (`agent_tool_id 2`) — persistent agent in the PR worktree (`extra_args` sets cwd).
-- quality reviewer: Claude (`agent_tool_id 3`), one-shot, ADVERSARIAL — "find what's wrong; default to reject."
-- acceptance judge: Claude (`agent_tool_id 3`) — judges vs the PR's acceptance criteria; reads REAL
-  `composer ready` / test output, not the implementer's claims.
+## Harness map (role → runtime)
+
+**Resolve every role through `~/Herd/brain/playbooks/resolve-agent-role.md` against
+`~/Herd/brain/agents.json`.** That file is the fleet-wide authority; this profile does not restate it.
+
+The copied runtime bindings, hardcoded Solo `agent_tool_id`s, and obsolete claim that only two runtimes
+worked reliably in this Solo environment were removed on 2026-08-31. Fleet bindings change, ids drift
+when tools are re-added, and the excluded runtimes have since run successfully under Solo.
+
+- Decorrelate review by **role and framing, not model lineage**. Give the quality reviewer one-shot,
+  adversarial framing: "find what's wrong; default to reject."
+- The acceptance judge evaluates against the PR's acceptance criteria and must read real
+  `composer ready` and test output rather than the implementer's claims.
+- Spawn every harness in the intended worktree: **opencode** takes the worktree path as its last
+  positional argument, **codex** takes `-C <path>`, and **claude** takes `--add-dir <path>`.
 
 ## Toolchain conformance — the ride-along rule (STANDING, all projects)
 
