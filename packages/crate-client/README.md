@@ -2,6 +2,8 @@
 
 Client-side helpers for Crate.
 
+See the [default integration guide](docs/integrate/default.md) for agent-ready installation, configuration, API, and verification steps.
+
 This package has two surfaces:
 
 - Consumer auth helper: write Composer HTTP Basic auth for a Crate registry.
