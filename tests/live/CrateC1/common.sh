@@ -124,6 +124,8 @@ print_summary() {
     for name in "${BLOCKED_NAMES[@]:-}"; do
         [[ -n "${name}" ]] && printf 'VERIFIER_BLOCKED %s\n' "${name}"
     done
+
+    return 0
 }
 
 cleanup() {
