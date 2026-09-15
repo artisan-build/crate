@@ -73,8 +73,8 @@ removal_status="$(curl --silent --show-error --location --cacert "${CRATE_C1_MAN
     "${CRATE_URL}/bfc/managed/login?intended=%2Fcrate%2Frepositories")"
 [[ "${removal_status}" == "404" ]] || fail "managed removal exchange expected 404, observed ${removal_status}"
 php "${CRATE_C1_DIR}/state/managed.php" assert-managed-entry removed
-assert_status managed-removal-session 401 "${CRATE_URL}/crate/repositories" --cookie "${managed_jar}" --header 'Accept: application/json'
-assert_status managed-removal-shared-session 401 "http://127.0.0.1:${CRATE_C1_NODE2_PORT}/crate/repositories" --cookie "${managed_jar}" --header 'Accept: application/json'
+assert_status managed-removal-session 403 "${CRATE_URL}/crate/repositories" --cookie "${managed_jar}" --header 'Accept: application/json'
+assert_status managed-removal-shared-session 403 "http://127.0.0.1:${CRATE_C1_NODE2_PORT}/crate/repositories" --cookie "${managed_jar}" --header 'Accept: application/json'
 pass freshness-explicit-removal
 
 verifier_blocked freshness-stale-response-ordering "installed serial fixture cannot release an older confirmation after a newer response"
