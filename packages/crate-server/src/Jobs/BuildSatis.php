@@ -23,6 +23,9 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
 {
     use FoundationQueueable;
 
+    /** Allow lock-contention releases to outlive a worker's --tries setting. */
+    public int $tries = 0;
+
     public function __construct(
         public readonly ?string $package = null,
         public readonly string $trigger = 'manual',

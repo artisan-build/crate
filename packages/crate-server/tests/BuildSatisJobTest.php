@@ -180,6 +180,7 @@ it('queues every same-archive build and serializes processing without dispatch-t
     $fullMiddleware = $fullJob->middleware();
 
     expect($packageJob)->not->toBeInstanceOf(ShouldBeUnique::class)
+        ->and($packageJob->tries)->toBe(0)
         ->and($packageMiddleware)->toHaveCount(1)
         ->and($packageMiddleware[0])->toBeInstanceOf(WithoutOverlapping::class)
         ->and($packageMiddleware[0]->key)->toBe('crate-satis-archive')
