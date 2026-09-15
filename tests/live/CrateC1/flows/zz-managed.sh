@@ -67,10 +67,14 @@ pass freshness-30m00-denial-session-end
 
 php "${CRATE_C1_DIR}/state/managed.php" confirmation-status 200
 php "${CRATE_C1_DIR}/state/managed.php" membership-response removed
-php "${CRATE_C1_DIR}/state/managed.php" set-age owner 300
-managed_status owner 401 "${CRATE_URL}"
-php "${CRATE_C1_DIR}/state/managed.php" assert-membership owner removed
-managed_status owner 401 "http://127.0.0.1:${CRATE_C1_NODE2_PORT}"
+removal_response="${WORK_DIR}/managed-removal.txt"
+removal_status="$(curl --silent --show-error --location --cacert "${CRATE_C1_MANAGED_CERTIFICATE}" \
+    --cookie "${managed_jar}" --cookie-jar "${managed_jar}" --output "${removal_response}" --write-out '%{http_code}' \
+    "${CRATE_URL}/bfc/managed/login?intended=%2Fcrate%2Frepositories")"
+[[ "${removal_status}" == "404" ]] || fail "managed removal exchange expected 404, observed ${removal_status}"
+php "${CRATE_C1_DIR}/state/managed.php" assert-managed-entry removed
+assert_status managed-removal-session 401 "${CRATE_URL}/crate/repositories" --cookie "${managed_jar}" --header 'Accept: application/json'
+assert_status managed-removal-shared-session 401 "http://127.0.0.1:${CRATE_C1_NODE2_PORT}/crate/repositories" --cookie "${managed_jar}" --header 'Accept: application/json'
 pass freshness-explicit-removal
 
 verifier_blocked freshness-stale-response-ordering "installed serial fixture cannot release an older confirmation after a newer response"

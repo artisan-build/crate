@@ -123,11 +123,17 @@ if ($operation === 'confirmation-count') {
 }
 
 if ($operation === 'assert-managed-entry') {
+    $status = $argv[2] ?? 'active';
+    if (! in_array($status, ['active', 'removed'], true)) {
+        fwrite(STDERR, "assert-managed-entry requires active or removed\n");
+        exit(1);
+    }
+
     $user = User::query()->where('email', 'live-fixture@example.test')->firstOrFail();
     if ($user->scalpels_issuer !== 'https://live-issuer.example.test'
         || $user->scalpels_connection_id !== 'live-connection'
         || $user->scalpels_id !== 'live-subject'
-        || $user->managed_membership_status !== 'active') {
+        || $user->managed_membership_status !== $status) {
         fwrite(STDERR, "managed entry assertion failed\n");
         exit(1);
     }
