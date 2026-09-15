@@ -96,8 +96,32 @@ it('returns indistinguishable 401 responses without streaming for invalid creden
         'missing' => $this->get('/packages.json'),
         'malformed' => $this->withHeader('Authorization', 'Basic !!!')->get('/packages.json'),
         'unknown' => crateServerAuthenticatedGet('/packages.json', 'unknown-secret'),
+        'legacy token shaped' => crateServerAuthenticatedGet('/packages.json', 'ctok_legacy-secret'),
+        'configured fallback' => (function (): TestResponse {
+            config()->set('built-for-cloud.fallback_token', 'retired-fallback-secret');
+
+            return crateServerAuthenticatedGet('/packages.json', 'retired-fallback-secret');
+        })(),
+        'wrong kind' => (function (): TestResponse {
+            [, $secret] = crateServerBasicCredential(['kind' => CredentialKind::Bearer]);
+
+            return crateServerAuthenticatedGet('/packages.json', $secret);
+        })(),
         'wrong purpose' => (function (): TestResponse {
             [, $secret] = crateServerBasicCredential(['purpose' => CredentialPurpose::SystemDeployment]);
+
+            return crateServerAuthenticatedGet('/packages.json', $secret);
+        })(),
+        'pending' => (function (): TestResponse {
+            [, $secret] = crateServerBasicCredential(['status' => CredentialStatus::Pending]);
+
+            return crateServerAuthenticatedGet('/packages.json', $secret);
+        })(),
+        'wrong subject' => (function (): TestResponse {
+            [, $secret] = crateServerBasicCredential([
+                'subject_type' => SubjectType::ExternalConsumer,
+                'subject_ref' => 'not-an-installation-or-account',
+            ]);
 
             return crateServerAuthenticatedGet('/packages.json', $secret);
         })(),
@@ -126,7 +150,20 @@ it('returns indistinguishable 401 responses without streaming for invalid creden
     };
 
     assertCrateRegistryRefusal($response);
-})->with(['missing', 'malformed', 'unknown', 'wrong purpose', 'expired', 'revoked', 'inactive account']);
+})->with([
+    'missing',
+    'malformed',
+    'unknown',
+    'legacy token shaped',
+    'configured fallback',
+    'wrong kind',
+    'wrong purpose',
+    'pending',
+    'wrong subject',
+    'expired',
+    'revoked',
+    'inactive account',
+]);
 
 it('keeps installation Basic access independent of creator and authority mode', function (): void {
     $creator = crateServerUser();
