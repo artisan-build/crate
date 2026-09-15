@@ -40,8 +40,8 @@ function appendLog(string $path, array $record): void
     file_put_contents($path, json_encode($record, JSON_THROW_ON_ERROR)."\n", FILE_APPEND | LOCK_EX);
 }
 
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+$method = filter_input(INPUT_SERVER, 'REQUEST_METHOD') ?: 'GET';
+$path = parse_url(filter_input(INPUT_SERVER, 'REQUEST_URI') ?: '/', PHP_URL_PATH) ?: '/';
 
 if ($method === 'GET' && $path === '/health') {
     header('Content-Type: application/json');
@@ -115,7 +115,7 @@ if (! is_array($response)) {
 
 $delayMs = filter_var($response['delay_ms'] ?? 0, FILTER_VALIDATE_INT);
 if (is_int($delayMs) && $delayMs > 0) {
-    usleep($delayMs * 1000);
+    time_nanosleep(intdiv($delayMs, 1000), ($delayMs % 1000) * 1_000_000);
 }
 
 http_response_code((int) ($response['status'] ?? 200));

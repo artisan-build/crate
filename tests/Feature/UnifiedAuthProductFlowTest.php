@@ -49,7 +49,7 @@ function crateSubmissionNonce(TestResponse $response, string $action): string
     expect($matched)->toBe(1);
 
     if (str_contains($action, '/credentials/installation')) {
-        test()->withCookie((string) config('session.cookie'), app('session')->getId());
+        test()->withCookie((string) config('session.cookie'), resolve('session')->getId());
     }
 
     return html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
