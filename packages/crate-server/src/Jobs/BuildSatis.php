@@ -47,6 +47,10 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
             ? null
             : ServedRepo::query()->where('name', $this->package)->first();
 
+        if ($this->package !== null && $servedRepo === null) {
+            return;
+        }
+
         $build = Build::query()->create([
             'served_repo_id' => $servedRepo?->getKey(),
             'trigger' => $this->trigger,
@@ -128,9 +132,9 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
     /** @return Builder<ServedRepo> */
     private function repositoryQuery(?ServedRepo $servedRepo): Builder
     {
-        return $servedRepo === null
+        return $this->package === null
             ? ServedRepo::query()
-            : ServedRepo::query()->whereKey($servedRepo->getKey());
+            : ServedRepo::query()->whereKey($servedRepo?->getKey());
     }
 
     private function seedOutputFromArchive(string $outputDir): void
