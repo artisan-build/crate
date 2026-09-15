@@ -30,6 +30,17 @@ $app = require $appDirectory.'/bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
 
 $operation = $argv[1] ?? '';
+$buildDiagnostic = static function (): string {
+    $build = Build::query()->latest('id')->first();
+    $repo = ServedRepo::query()->orderByDesc('id')->first();
+
+    return json_encode([
+        'build_status' => $build?->status->value ?? 'missing',
+        'build_output' => $build?->output ?? '',
+        'repository_status' => $repo?->status->value ?? 'missing',
+        'archive_exists' => Storage::disk((string) config('crate-server.archive_disk'))->exists('satis/packages.json'),
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)."\n";
+};
 
 if ($operation === 'count-repositories') {
     echo ServedRepo::query()->count();
@@ -43,15 +54,7 @@ if ($operation === 'build-state') {
 }
 
 if ($operation === 'build-diagnostic') {
-    $build = Build::query()->latest('id')->first();
-    $repo = ServedRepo::query()->orderByDesc('id')->first();
-
-    echo json_encode([
-        'build_status' => $build?->status->value ?? 'missing',
-        'build_output' => $build?->output ?? '',
-        'repository_status' => $repo?->status->value ?? 'missing',
-        'archive_exists' => Storage::disk((string) config('crate-server.archive_disk'))->exists('satis/packages.json'),
-    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)."\n";
+    echo $buildDiagnostic();
     exit(0);
 }
 
@@ -60,7 +63,7 @@ if ($operation === 'assert-registry-built') {
     if ($build->status->value !== 'succeeded'
         || ! Storage::disk((string) config('crate-server.archive_disk'))->exists('satis/packages.json')) {
         fwrite(STDERR, "registry build is incomplete:\n");
-        passthru(PHP_BINARY.' '.escapeshellarg(__FILE__).' build-diagnostic');
+        fwrite(STDERR, $buildDiagnostic());
         exit(1);
     }
     exit(0);
