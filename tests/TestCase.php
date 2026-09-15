@@ -8,6 +8,9 @@ use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 
 abstract class TestCase extends BaseTestCase
 {
+    /** @var list<string|null> */
+    protected array $connectionsToTransact = [null, 'crate'];
+
     public function actingAsVersioned(User $user, ?string $guard = null): static
     {
         $user->refresh();
