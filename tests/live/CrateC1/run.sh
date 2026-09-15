@@ -213,8 +213,14 @@ for flow in "${CRATE_C1_DIR}"/flows/*.sh; do
     source "${flow}"
 done
 
-php "${APP_DIR}/artisan" schedule:run --no-interaction
-pass scheduler-invoked
+before_scheduled_build="$(php "${CRATE_C1_DIR}/state/seed.php" latest-build-id)"
+php "${APP_DIR}/artisan" schedule:test --name='crate:build --trigger=schedule' --no-interaction
+for _ in {1..120}; do
+    [[ "$(php "${CRATE_C1_DIR}/state/seed.php" build-state-after "${before_scheduled_build}")" == "succeeded" ]] && break
+    sleep 0.5
+done
+php "${CRATE_C1_DIR}/state/seed.php" assert-build-trigger-after "${before_scheduled_build}" schedule
+pass scheduler-executed-satis-build
 
 php "${CRATE_C1_DIR}/state/inspect.php" final
 print_summary

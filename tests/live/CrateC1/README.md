@@ -30,18 +30,19 @@ These credentials are the known disposable `crate-c1-live-*` service credentials
 
 Successful observations are emitted as `PASS <name>`. An exact contract case that cannot be exercised through the released public host hooks is emitted as `VERIFIER_BLOCKED <name> <reason>` and is not counted as a pass. Any unexpected status, any denial returning 5xx, leaked fixture secret, or domain mutation after denial fails the run.
 
-The freshness cases are named individually:
+The managed personal-Basic freshness cases are named individually:
 
-- `freshness-4m59-cached`
-- `freshness-5m00-shared-refresh`
-- `freshness-29m59-transient-grace`
-- `freshness-30m00-denial-session-end`
-- `freshness-explicit-removal`
+- `freshness-4m59-personal-basic-cached`
+- `freshness-5m00-personal-basic-shared-refresh`
+- `freshness-29m59-personal-basic-transient-grace`
+- `freshness-30m00-personal-basic-denial-session-end`
+- `freshness-personal-basic-restoration-and-immediate-role-change`
+- `freshness-explicit-removal-personal-basic`
 - `freshness-stale-response-ordering`
 
 Where the public package surface cannot deterministically set authority time or order responses, the corresponding case remains `VERIFIER_BLOCKED`; the harness does not fake a host-owned freshness boundary.
 
-The installed Built for Cloud managed-authority fixture serves real TLS and monotonic confirmation responses. Crate drives the 4:59, 5:00, 29:59, 30:00, and explicit-removal cases through real HTTP nodes against shared PostgreSQL/Redis state. The fixture is intentionally serial and cannot release an older confirmation after a newer response, so `freshness-stale-response-ordering` is reported as `VERIFIER_BLOCKED` rather than promoted from package-level evidence.
+The installed Built for Cloud managed-authority fixture serves real TLS and monotonic confirmation responses. Crate drives the 4:59, 5:00, 29:59, 30:00, restoration/role-change, and explicit-removal cases through personal Basic requests and real HTTP nodes against shared PostgreSQL/Redis state. The scheduled build is forced through Laravel's `schedule:test` command, then observed through the real Redis worker and successful Satis build row. The fixture is intentionally serial and cannot release an older confirmation after a newer response, so `freshness-stale-response-ordering` is reported as `VERIFIER_BLOCKED` rather than promoted from package-level evidence.
 
 ## Safety
 

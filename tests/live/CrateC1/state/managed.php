@@ -3,7 +3,12 @@
 declare(strict_types=1);
 
 use ArtisanBuild\BuiltForCloud\AuthorityMode;
+use ArtisanBuild\BuiltForCloud\Credential;
+use ArtisanBuild\BuiltForCloud\CredentialKind;
+use ArtisanBuild\BuiltForCloud\CredentialPurpose;
+use ArtisanBuild\BuiltForCloud\CredentialStatus;
 use ArtisanBuild\BuiltForCloud\InstallationAuthority;
+use ArtisanBuild\BuiltForCloud\SubjectType;
 use ArtisanBuild\BuiltForCloud\User;
 use ArtisanBuild\BuiltForCloud\UserRole;
 use Illuminate\Contracts\Console\Kernel;
@@ -123,6 +128,58 @@ if ($operation === 'confirmation-count') {
     $contents = file_get_contents($statusPath);
     $status = is_string($contents) ? json_decode($contents, true) : null;
     echo is_array($status) ? (int) ($status['confirmation_count'] ?? 0) : 0;
+    exit(0);
+}
+
+if ($operation === 'identity-credential-fingerprint') {
+    $role = UserRole::tryFrom($argv[2] ?? '');
+    if (! $role instanceof UserRole) {
+        fwrite(STDERR, "identity-credential-fingerprint requires a role\n");
+        exit(1);
+    }
+
+    $user = User::query()->where('email', $role->value.'@crate-c1.example.test')->firstOrFail();
+    $credential = Credential::query()->where('name', 'c1-personal-'.$role->value)->firstOrFail();
+    echo $user->getKey().':'.$credential->getKey();
+    exit(0);
+}
+
+if ($operation === 'assert-role') {
+    $role = UserRole::tryFrom($argv[2] ?? '');
+    $expected = $argv[3] ?? '';
+    if (! $role instanceof UserRole || ! UserRole::tryFrom($expected) instanceof UserRole) {
+        fwrite(STDERR, "assert-role requires source and expected roles\n");
+        exit(1);
+    }
+
+    $actual = User::query()->where('email', $role->value.'@crate-c1.example.test')->value('role');
+    if ($actual !== $expected) {
+        fwrite(STDERR, "managed role assertion failed\n");
+        exit(1);
+    }
+    exit(0);
+}
+
+if ($operation === 'ensure-managed-entry-credential') {
+    $master = getenv('CRATE_C1_FIXTURE_SECRET');
+    if (! is_string($master) || $master === '') {
+        fwrite(STDERR, "CRATE_C1_FIXTURE_SECRET is required\n");
+        exit(1);
+    }
+
+    $user = User::query()->where('email', 'live-fixture@example.test')->firstOrFail();
+    Credential::query()->firstOrCreate(
+        ['name' => 'c1-personal-managed-entry'],
+        [
+            'kind' => CredentialKind::Basic,
+            'purpose' => CredentialPurpose::Consumption,
+            'subject_type' => SubjectType::UserPrincipal,
+            'subject_ref' => 'crate-user:'.$user->getKey(),
+            'user_id' => (string) $user->getKey(),
+            'status' => CredentialStatus::Active,
+            'secret_hash' => hash('sha256', hash_hmac('sha256', 'personal-managed-entry', $master)),
+        ],
+    );
     exit(0);
 }
 

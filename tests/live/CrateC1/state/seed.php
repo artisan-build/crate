@@ -70,6 +70,22 @@ if ($operation === 'build-state-after') {
     exit(0);
 }
 
+if ($operation === 'assert-build-trigger-after') {
+    $buildId = $argv[2] ?? '';
+    $trigger = $argv[3] ?? '';
+    if (! ctype_digit($buildId) || $trigger === '') {
+        fwrite(STDERR, "assert-build-trigger-after requires a build ID and trigger\n");
+        exit(1);
+    }
+
+    $build = Build::query()->where('id', '>', (int) $buildId)->latest('id')->firstOrFail();
+    if ($build->trigger !== $trigger || $build->status->value !== 'succeeded') {
+        fwrite(STDERR, "scheduled build assertion failed\n");
+        exit(1);
+    }
+    exit(0);
+}
+
 if (in_array($operation, ['assert-source-secret-stored', 'assert-source-secret-cleared', 'assert-source-build-safe'], true)) {
     $master = getenv('CRATE_C1_FIXTURE_SECRET');
     $workDirectory = getenv('WORK_DIR');
