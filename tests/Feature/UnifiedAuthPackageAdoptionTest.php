@@ -100,7 +100,7 @@ it('keeps standalone authority active when delayed managed connection fields arr
 });
 
 it('converges exact managed subjects without same-email linking and retains collision provenance', function (): void {
-    $upsert = app(ManagedIdentityUpsert::class);
+    $upsert = resolve(ManagedIdentityUpsert::class);
     $connection = crateManagedConnection();
     $contact = 'shared-managed-contact@example.test';
 
