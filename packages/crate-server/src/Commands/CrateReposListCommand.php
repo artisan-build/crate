@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\CrateServer\Commands;
 
+use ArtisanBuild\BuiltForCloud\Commands\SystemAuthorityCommand;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
-use Illuminate\Console\Command;
 
-final class CrateReposListCommand extends Command
+final class CrateReposListCommand extends SystemAuthorityCommand
 {
     protected $signature = 'crate:repos:list';
 

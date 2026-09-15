@@ -10,8 +10,8 @@ use ArtisanBuild\CrateServer\Commands\CrateReposAddCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposListCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposRemoveCommand;
 use ArtisanBuild\CrateServer\Http\Middleware\EnsureValidCredential;
-use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\ServiceProvider;
 
 final class CrateServerServiceProvider extends ServiceProvider
@@ -36,6 +36,7 @@ final class CrateServerServiceProvider extends ServiceProvider
         }
 
         Route::middleware(['crate-server.credential'])->group(__DIR__.'/../routes/crate-server.php');
+        Route::middleware(['web', 'bfc.auth'])->group(__DIR__.'/../routes/crate-server-management.php');
 
         if ($this->app->runningInConsole()) {
             $this->commands([
@@ -47,8 +48,8 @@ final class CrateServerServiceProvider extends ServiceProvider
             ]);
         }
 
-        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
-            $schedule->command('crate:build --trigger=schedule')->daily();
+        $this->app->booted(function (): void {
+            Schedule::command('crate:build --trigger=schedule')->daily();
         });
     }
 

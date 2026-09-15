@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace ArtisanBuild\CrateServer\Tests;
 
 use ArtisanBuild\BuiltForCloud\BuiltForCloudServiceProvider;
+use ArtisanBuild\BuiltForCloud\User;
+use ArtisanBuild\CrateServer\CrateCredentialDeclaration;
 use ArtisanBuild\CrateServer\CrateServerServiceProvider;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -37,6 +39,14 @@ abstract class TestCase extends Orchestra
     protected function getEnvironmentSetUp($app): void
     {
         $app['config']->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
+        $app['config']->set('auth.defaults.guard', 'web');
+        $app['config']->set('auth.guards.web', ['driver' => 'session', 'provider' => 'users']);
+        $app['config']->set('auth.guards.bfc', ['driver' => 'bfc', 'provider' => 'users']);
+        $app['config']->set('auth.providers.users', ['driver' => 'eloquent', 'model' => User::class]);
+        $app['config']->set('built-for-cloud.credentials.declaration', CrateCredentialDeclaration::class);
+        $app['config']->set('built-for-cloud.credentials.app_purposes', [
+            CrateCredentialDeclaration::COMPOSER_PURPOSE => 'consumption',
+        ]);
         $app['config']->set('database.default', 'crate');
         $app['config']->set('database.connections.crate', [
             'driver' => 'sqlite',

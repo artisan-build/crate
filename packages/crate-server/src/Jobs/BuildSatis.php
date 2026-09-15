@@ -4,25 +4,35 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\CrateServer\Jobs;
 
+use ArtisanBuild\BuiltForCloud\Contracts\SystemAuthorityQueueEntry;
 use ArtisanBuild\CrateContracts\BuildStatus;
+use ArtisanBuild\CrateContracts\RepoStatus;
 use ArtisanBuild\CrateServer\Models\Build;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
 use ArtisanBuild\CrateServer\SatisConfigGenerator;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Foundation\Queue\Queueable as FoundationQueueable;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
 
-final class BuildSatis implements ShouldQueue
+final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQueueEntry
 {
     use FoundationQueueable;
+
+    public int $uniqueFor = 600;
 
     public function __construct(
         public readonly ?string $package = null,
         public readonly string $trigger = 'manual',
     ) {}
+
+    public function uniqueId(): string
+    {
+        return $this->package ?? 'full';
+    }
 
     public function handle(SatisConfigGenerator $generator): void
     {
@@ -36,6 +46,8 @@ final class BuildSatis implements ShouldQueue
             'status' => BuildStatus::Running,
             'started_at' => now(),
         ]);
+
+        $servedRepo?->update(['status' => RepoStatus::Building]);
 
         $workingDir = storage_path('framework/cache/crate-satis');
         File::ensureDirectoryExists($workingDir);
@@ -76,6 +88,10 @@ final class BuildSatis implements ShouldQueue
                     'output' => $output,
                     'finished_at' => now(),
                 ]);
+                $servedRepo?->update([
+                    'status' => RepoStatus::Active,
+                    'last_built_at' => now(),
+                ]);
 
                 return;
             }
@@ -85,12 +101,14 @@ final class BuildSatis implements ShouldQueue
                 'output' => $output,
                 'finished_at' => now(),
             ]);
+            $servedRepo?->update(['status' => RepoStatus::Failed]);
         } catch (Throwable $throwable) {
             $build->update([
                 'status' => BuildStatus::Failed,
                 'output' => $this->redactedTail($throwable->getMessage()),
                 'finished_at' => now(),
             ]);
+            $servedRepo?->update(['status' => RepoStatus::Failed]);
         } finally {
             File::delete($authPath);
             File::deleteDirectory($tempDir);
