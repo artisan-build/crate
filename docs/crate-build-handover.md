@@ -1,5 +1,7 @@
 # Crate — Build Handover
 
+> **Historical pre-implementation design (July 2026).** This file records the original build plan and intentionally retains retired token-store and endpoint terminology. It is not supported operational or integration guidance. Use [`../README.md`](../README.md), [`deploy.md`](deploy.md), and the package READMEs for the implemented unified-auth behavior.
+
 **Self-hosted, unmetered private Composer registry for Laravel, on Laravel Cloud.**
 
 Crate is a private package registry you **fork and deploy to your own Laravel Cloud account**. It

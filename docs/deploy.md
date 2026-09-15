@@ -4,7 +4,7 @@
 
 Crate is a fork-and-deploy private Composer registry for Laravel Cloud. Fork the app, deploy it into your own Laravel Cloud account, provision the app's database, queue, and object storage there, then run the first Crate build against the private repositories you want to serve.
 
-Each deployment is single-tenant and unmetered by Crate. Your Laravel Cloud account owns the compute, Postgres database, Redis queue, and object storage; Crate has no hosted control plane and no web UI in this release.
+Each deployment is single-tenant and unmetered by Crate. Your Laravel Cloud account owns the compute, Postgres database, Redis queue, and object storage; Crate has no hosted control plane. Built for Cloud supplies the account, membership, session, transition, and credential UI under `/bfc/*`.
 
 ## Provision Resources
 
@@ -16,7 +16,7 @@ Create these resources in Laravel Cloud and attach them to the Crate environment
 
 Cardinal rule: never hand-set Cloud-injected resource environment variables. Laravel Cloud injects database, queue, cache, filesystem connection selectors, credentials, and endpoints into the environment. Do not set `DB_*`, `QUEUE_*`, `CACHE_*`, or `FILESYSTEM_DISK` yourself; overriding Cloud's injected values breaks the managed resource.
 
-`php artisan crate:install` only writes Crate's own application config: `CRATE_URL`, `CRATE_ARCHIVE_DISK`, `CRATE_SATIS_PATH`, and `BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED`. It never writes Cloud-managed database, queue, cache, or filesystem env.
+`php artisan crate:install` only writes Crate's own application config: `CRATE_URL`, `CRATE_ARCHIVE_DISK`, and `CRATE_SATIS_PATH`. It never writes Cloud-managed database, queue, cache, or filesystem env.
 
 ## Build Command
 
@@ -102,8 +102,7 @@ php artisan crate:install
 php artisan crate:install --no-interaction \
   --url="https://crate.example.com" \
   --archive-disk="crate-archive" \
-  --satis-path="/var/www/satis-tool/bin/satis" \
-  --credential-api=true
+  --satis-path="/var/www/satis-tool/bin/satis"
 ```
 
 The installer is idempotent and will not overwrite an existing value without confirmation (pass `--force` non-interactively). It configures only these app values:
@@ -111,8 +110,6 @@ The installer is idempotent and will not overwrite an existing value without con
 - `CRATE_URL`: the public Crate registry URL used as the Satis homepage and archive prefix.
 - `CRATE_ARCHIVE_DISK`: the object-storage filesystem disk name Crate should use for Satis output and mirrored archives.
 - `CRATE_SATIS_PATH`: the path to the isolated Satis executable (`<install-dir>/bin/satis`), which the build job executes directly. The config default is `base_path('satis-tool/bin/satis')`, where `crate:install-satis` installs it — set this only when Satis lives elsewhere, as it does in the hand-rolled VM install above.
-- `BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED`: whether built-for-cloud's admin-token credential API is enabled.
-
 Then run migrations:
 
 ```bash
@@ -123,13 +120,9 @@ php artisan migrate --force
 
 The order matters. Configure first (`CRATE_URL`, and `CRATE_ARCHIVE_DISK` / `CRATE_SATIS_PATH` if you are not using their defaults), then migrate, then register repositories, then build. Running `crate:build` before `CRATE_URL` is set fails with the JSON-schema error described in Configure.
 
-Create an admin token for the credential API and issuer SDK:
+Sign in through the Built for Cloud package UI and create a personal or installation-owned Basic credential for `crate.composer.consume`. Owner, Admin, and Member can all manage credentials. The package shows delivery material once; transfer it directly to the consumer's secret store.
 
-```bash
-php artisan token:create ci --abilities=admin
-```
-
-`token:create` dispatches through the Laravel Cloud CLI by default. When you are already running inside the target environment, add `--execute` to execute the token creation there directly.
+For a separate operator app using `CrateIssuer`, provision a unified operator credential with only the needed credential verb abilities and configure it as `CRATE_SERVICE_TOKEN`. All local state-changing Built for Cloud CLI operations must use `--local`, for example `php artisan bfc:credential:mint ... --local`; without it, supported commands may delegate to a selected Laravel Cloud environment. Never put reveal-once output in command history, logs, or retained agent output.
 
 Register a private package repository, storing a source-read token if the repository is private:
 
@@ -162,3 +155,5 @@ composer require vendor/pkg
 ```
 
 `crate:auth` writes or merges Composer HTTP Basic auth for the Crate host. Composer then reads `/packages.json`, `/p2/...`, and `/dist/...` through the Crate credential gate.
+
+The gate accepts only active Basic credentials for fixed purpose `crate.composer.consume`. Personal credentials follow the account's versioned managed-session state; installation credentials belong to the installation-local credential store and survive creator departure. The installation credential `subject_ref` is an automation routing identity, not an installation ID.
