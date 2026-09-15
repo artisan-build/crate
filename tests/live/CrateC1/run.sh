@@ -26,6 +26,7 @@ Harness controls:
   CRATE_C1_NODE1_PORT           default 32801
   CRATE_C1_NODE2_PORT           default 32802
   CRATE_C1_STUB_PORT            default 32803
+  CRATE_C1_FIXTURE_PORT         default 32804
   CRATE_C1_ALLOW_NON_LOOPBACK   default 0
   CRATE_C1_KEEP                 default 0
 USAGE
@@ -48,6 +49,7 @@ export CRATE_C1_S3_PORT="${CRATE_C1_S3_PORT:-32792}"
 export CRATE_C1_NODE1_PORT="${CRATE_C1_NODE1_PORT:-32801}"
 export CRATE_C1_NODE2_PORT="${CRATE_C1_NODE2_PORT:-32802}"
 export CRATE_C1_STUB_PORT="${CRATE_C1_STUB_PORT:-32803}"
+export CRATE_C1_FIXTURE_PORT="${CRATE_C1_FIXTURE_PORT:-32804}"
 export CRATE_C1_S3_ACCESS_KEY="${CRATE_C1_S3_ACCESS_KEY:-cratec1access}"
 export CRATE_C1_S3_SECRET_KEY="${CRATE_C1_S3_SECRET_KEY:-cratec1secretkey}"
 
@@ -98,6 +100,11 @@ export DB_PORT="${CRATE_C1_PG_PORT}"
 export DB_DATABASE="${CRATE_C1_DB_NAME}"
 export DB_USERNAME="${CRATE_C1_PG_USER}"
 export DB_PASSWORD="${CRATE_C1_PG_PASSWORD}"
+export CRATE_DB_HOST="${CRATE_C1_PG_HOST}"
+export CRATE_DB_PORT="${CRATE_C1_PG_PORT}"
+export CRATE_DB_DATABASE="${CRATE_C1_DB_NAME}"
+export CRATE_DB_USERNAME="${CRATE_C1_PG_USER}"
+export CRATE_DB_PASSWORD="${CRATE_C1_PG_PASSWORD}"
 export CACHE_STORE=redis
 export SESSION_DRIVER=redis
 export QUEUE_CONNECTION=redis
@@ -116,12 +123,51 @@ export AWS_USE_PATH_STYLE_ENDPOINT=true
 export MAIL_MAILER=log
 export LOG_CHANNEL=single
 export SCALPELS_URL="http://127.0.0.1:${CRATE_C1_STUB_PORT}"
+export CRATE_URL="http://127.0.0.1:${CRATE_C1_NODE1_PORT}"
+export CRATE_C1_FIXTURE_REPO_URL="http://127.0.0.1:${CRATE_C1_FIXTURE_PORT}/fixture.git"
 
 composer install --working-dir="${APP_DIR}" --no-interaction --prefer-dist
 php "${APP_DIR}/artisan" migrate --force --no-interaction
+php "${APP_DIR}/artisan" crate:install-satis --no-interaction
 php "${CRATE_C1_DIR}/state/storage.php" create-bucket
 php "${CRATE_C1_DIR}/state/seed.php" substrate
 pass production-like-substrate
+
+FIXTURE_WORK="${WORK_DIR}/fixture-work"
+FIXTURE_HTTP="${WORK_DIR}/fixture-http"
+mkdir -p "${FIXTURE_WORK}/src" "${FIXTURE_HTTP}"
+cat >"${FIXTURE_WORK}/composer.json" <<'JSON'
+{
+    "name": "crate-c1/fixture",
+    "description": "Disposable Crate C1 fixture",
+    "version": "1.0.0",
+    "autoload": {"psr-4": {"CrateC1\\Fixture\\": "src/"}}
+}
+JSON
+cat >"${FIXTURE_WORK}/src/Fixture.php" <<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace CrateC1\Fixture;
+
+final class Fixture
+{
+    public const string VALUE = 'crate-c1-live';
+}
+PHP
+git -C "${FIXTURE_WORK}" init --quiet
+git -C "${FIXTURE_WORK}" config user.name "Crate C1 Fixture"
+git -C "${FIXTURE_WORK}" config user.email "crate-c1@example.test"
+git -C "${FIXTURE_WORK}" add composer.json src/Fixture.php
+git -C "${FIXTURE_WORK}" commit --quiet -m "fixture 1.0.0"
+git -C "${FIXTURE_WORK}" tag 1.0.0
+git clone --quiet --bare "${FIXTURE_WORK}" "${FIXTURE_HTTP}/fixture.git"
+git --git-dir="${FIXTURE_HTTP}/fixture.git" update-server-info
+php -S "127.0.0.1:${CRATE_C1_FIXTURE_PORT}" -t "${FIXTURE_HTTP}" >"${WORK_DIR}/fixture-http.log" 2>&1 &
+register_pid "$!"
+wait_for_http "${CRATE_C1_FIXTURE_REPO_URL}/info/refs"
+pass disposable-git-repository
 
 php -S "127.0.0.1:${CRATE_C1_STUB_PORT}" "${CRATE_C1_DIR}/authority-stub.php" >"${WORK_DIR}/authority.log" 2>&1 &
 register_pid "$!"

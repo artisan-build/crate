@@ -81,6 +81,21 @@ assert_status() {
     pass "${name}"
 }
 
+form_value() {
+    php -r '
+        $html = file_get_contents($argv[1]);
+        $name = preg_quote($argv[2], "/");
+        if (! is_string($html) || preg_match("/<input[^>]+name=\\\"{$name}\\\"[^>]+value=\\\"([^\\\"]+)\\\"/", $html, $matches) !== 1) {
+            exit(1);
+        }
+        echo html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
+    ' "$1" "$2"
+}
+
+fixture_secret() {
+    php -r 'echo hash_hmac("sha256", $argv[1], getenv("CRATE_C1_FIXTURE_SECRET"));' "$1"
+}
+
 bfc_artisan() {
     local has_local=0
     local argument
