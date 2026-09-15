@@ -107,6 +107,47 @@ it('prunes objects omitted by a successful full build', function (): void {
     Storage::disk('crate-archive')->assertExists('outside-satis.txt');
 });
 
+it('ignores a stale package build that runs after its removal build', function (): void {
+    Storage::fake('crate-archive');
+    Storage::disk('crate-archive')->put('satis/packages.json', '{"packages":{"review/remaining":[],"review/removed":[]}}');
+    Storage::disk('crate-archive')->put('satis/p2/review/removed.json', 'stale-provider');
+    Storage::disk('crate-archive')->put('satis/dist/review/removed/archive.zip', 'stale-archive');
+
+    $remaining = ServedRepo::factory()->create([
+        'name' => 'review/remaining',
+        'status' => RepoStatus::Active,
+    ]);
+    $removed = ServedRepo::factory()->create(['name' => 'review/removed']);
+    $stalePackageBuild = new BuildSatis($removed->name, 'repository-added');
+    $removalBuild = new BuildSatis(trigger: 'repository-removed');
+    $requirements = [];
+
+    $removed->delete();
+
+    Process::fake(function (PendingProcess $process) use (&$requirements) {
+        $config = json_decode(File::get($process->path.'/satis.json'), true, flags: JSON_THROW_ON_ERROR);
+        $requirements[] = $config['require'];
+        File::put($process->path.'/output/packages.json', '{"packages":{"review/remaining":[]}}');
+        File::ensureDirectoryExists($process->path.'/output/p2/review');
+        File::put($process->path.'/output/p2/review/remaining.json', 'remaining-provider');
+
+        return Process::result('satis built');
+    });
+
+    $removalBuild->handle(app(SatisConfigGenerator::class));
+    $latestBuild = Build::query()->latest('id')->firstOrFail();
+    $stalePackageBuild->handle(app(SatisConfigGenerator::class));
+
+    expect($requirements)->toBe([['review/remaining' => '*']])
+        ->and(Build::query()->count())->toBe(1)
+        ->and(Build::query()->latest('id')->firstOrFail()->is($latestBuild))->toBeTrue()
+        ->and($latestBuild->status)->toBe(BuildStatus::Succeeded)
+        ->and($remaining->refresh()->status)->toBe(RepoStatus::Active);
+
+    Storage::disk('crate-archive')->assertMissing('satis/p2/review/removed.json');
+    Storage::disk('crate-archive')->assertMissing('satis/dist/review/removed/archive.zip');
+});
+
 it('records a failed build for a failed process result', function (): void {
     Storage::fake('crate-archive');
     $repo = ServedRepo::factory()->create(['name' => 'vendor/package']);
