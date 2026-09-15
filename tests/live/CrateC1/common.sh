@@ -146,12 +146,15 @@ cleanup() {
     fi
 
     if [[ -n "${CRATE_C1_DB_NAME:-}" ]]; then
-        PGPASSWORD="${CRATE_C1_PG_PASSWORD}" dropdb \
-            --if-exists \
+        [[ "${CRATE_C1_DB_NAME}" =~ ^crate_c1_[a-f0-9]{12}$ ]] || fail "refusing to drop unexpected database name"
+        PGPASSWORD="${CRATE_C1_PG_PASSWORD}" psql \
             --host="${CRATE_C1_PG_HOST}" \
             --port="${CRATE_C1_PG_PORT}" \
             --username="${CRATE_C1_PG_USER}" \
-            "${CRATE_C1_DB_NAME}" >/dev/null 2>&1 || true
+            --dbname=postgres \
+            --set=ON_ERROR_STOP=1 \
+            --command="SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${CRATE_C1_DB_NAME}' AND pid <> pg_backend_pid();" \
+            --command="DROP DATABASE IF EXISTS \"${CRATE_C1_DB_NAME}\";" >/dev/null 2>&1 || true
     fi
 
     if [[ "${CRATE_C1_KEEP:-0}" == "1" ]]; then

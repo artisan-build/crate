@@ -55,7 +55,7 @@ assert_loopback PostgreSQL "${CRATE_C1_PG_HOST}"
 assert_loopback Redis "${CRATE_C1_REDIS_HOST}"
 assert_loopback MinIO "${CRATE_C1_S3_HOST}"
 
-for command in php composer git curl psql createdb dropdb redis-cli tar; do
+for command in php composer git curl psql redis-cli tar; do
     require_command "${command}"
 done
 
@@ -78,11 +78,14 @@ mkdir -p "${APP_DIR}"
 git -C "${CRATE_ROOT}" archive HEAD | tar -x -C "${APP_DIR}" --strip-components=0
 pass committed-source-archive
 
-PGPASSWORD="${CRATE_C1_PG_PASSWORD}" createdb \
+[[ "${CRATE_C1_DB_NAME}" =~ ^crate_c1_[a-f0-9]{12}$ ]] || fail "generated database name is invalid"
+PGPASSWORD="${CRATE_C1_PG_PASSWORD}" psql \
     --host="${CRATE_C1_PG_HOST}" \
     --port="${CRATE_C1_PG_PORT}" \
     --username="${CRATE_C1_PG_USER}" \
-    "${CRATE_C1_DB_NAME}"
+    --dbname=postgres \
+    --set=ON_ERROR_STOP=1 \
+    --command="CREATE DATABASE \"${CRATE_C1_DB_NAME}\";"
 pass isolated-postgres-created
 
 export APP_ENV=testing

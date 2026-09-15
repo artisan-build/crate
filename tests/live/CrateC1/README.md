@@ -7,7 +7,7 @@ The harness never targets a current installation, Laravel Cloud, an external Sca
 ## Prerequisites
 
 - PHP and Composer compatible with the committed lock file
-- `git`, `curl`, `psql`, `createdb`, `dropdb`, and `redis-cli`
+- `git`, `curl`, `psql`, and `redis-cli`
 - Disposable PostgreSQL, Redis, and MinIO endpoints reachable from the host
 - An empty, disposable MinIO access key pair; never provide production credentials
 
