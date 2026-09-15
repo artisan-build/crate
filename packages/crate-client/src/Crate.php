@@ -30,8 +30,17 @@ final class Crate
             throw new RuntimeException('The crate-client.url config value must include a valid host.');
         }
 
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+        $port = parse_url($url, PHP_URL_PORT);
+        $defaultPort = match (is_string($scheme) ? strtolower($scheme) : '') {
+            'http' => 80,
+            'https' => 443,
+            default => null,
+        };
+        $authority = is_int($port) && $port !== $defaultPort ? $host.':'.$port : $host;
+
         return [
-            $host => [
+            $authority => [
                 'username' => 'token',
                 'password' => $token,
             ],

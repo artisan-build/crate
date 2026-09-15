@@ -13,6 +13,24 @@ it('builds the composer auth fragment', function (): void {
     ]);
 });
 
+it('omits default ports from the composer auth host', function (string $url): void {
+    config()->set('crate-client.url', $url);
+
+    expect(Crate::composerAuthFragment())->toHaveKey('crate.example.com');
+})->with([
+    'http' => 'http://crate.example.com:80',
+    'https' => 'https://crate.example.com:443',
+]);
+
+it('preserves non-default ports in the composer auth host', function (string $url, string $authority): void {
+    config()->set('crate-client.url', $url);
+
+    expect(Crate::composerAuthFragment())->toHaveKey($authority);
+})->with([
+    'http' => ['http://127.0.0.1:32801', '127.0.0.1:32801'],
+    'https' => ['https://crate.example.com:8443', 'crate.example.com:8443'],
+]);
+
 it('builds the composer auth json value', function (): void {
     expect(json_decode(Crate::composerAuthJson(), true))->toBe([
         'http-basic' => [
