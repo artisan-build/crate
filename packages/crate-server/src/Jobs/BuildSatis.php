@@ -10,29 +10,32 @@ use ArtisanBuild\CrateContracts\RepoStatus;
 use ArtisanBuild\CrateServer\Models\Build;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
 use ArtisanBuild\CrateServer\SatisConfigGenerator;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Foundation\Queue\Queueable as FoundationQueueable;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
 
-final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQueueEntry
+final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
 {
     use FoundationQueueable;
-
-    public int $uniqueFor = 600;
 
     public function __construct(
         public readonly ?string $package = null,
         public readonly string $trigger = 'manual',
     ) {}
 
-    public function uniqueId(): string
+    /** @return list<WithoutOverlapping> */
+    public function middleware(): array
     {
-        return $this->package ?? 'full';
+        return [
+            (new WithoutOverlapping('crate-satis-archive'))
+                ->releaseAfter(5)
+                ->expireAfter(600),
+        ];
     }
 
     public function handle(SatisConfigGenerator $generator): void
@@ -57,6 +60,7 @@ final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQu
         File::makeDirectory($tempDir, 0755, true, true);
 
         $authPath = $tempDir.'/auth.json';
+        $sourceCredentials = [];
 
         try {
             $configPath = $tempDir.'/satis.json';
@@ -64,6 +68,7 @@ final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQu
 
             File::put($configPath, json_encode($generator->generate($this->package), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             $auth = $generator->authConfig();
+            $sourceCredentials = $this->sourceCredentials($auth);
             File::put($authPath, json_encode($auth === [] ? (object) [] : $auth, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             File::ensureDirectoryExists($outputDir);
 
@@ -80,7 +85,7 @@ final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQu
                     $outputDir,
                 ]);
 
-            $output = $this->redactedTail($result->output().$result->errorOutput());
+            $output = $this->redactedTail($result->output().$result->errorOutput(), $sourceCredentials);
 
             if ($result->successful()) {
                 $this->mirrorOutput($outputDir);
@@ -107,7 +112,7 @@ final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQu
         } catch (Throwable $throwable) {
             $build->update([
                 'status' => BuildStatus::Failed,
-                'output' => $this->redactedTail($throwable->getMessage()),
+                'output' => $this->redactedTail($throwable->getMessage(), $sourceCredentials),
                 'finished_at' => now(),
             ]);
             $this->repositoryQuery($servedRepo)->update(['status' => RepoStatus::Failed]);
@@ -148,29 +153,51 @@ final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQu
     {
         $disk = Storage::disk((string) config('crate-server.archive_disk'));
         $prefix = trim((string) config('crate-server.output_dir'), '/');
+        $existing = $disk->allFiles($prefix);
+        $published = [];
 
         foreach (File::allFiles($outputDir) as $file) {
             $relativePath = $file->getRelativePathname();
             $target = $prefix === '' ? $relativePath : $prefix.'/'.$relativePath;
 
             $disk->put($target, File::get($file->getPathname()));
+            $published[] = $target;
+        }
+
+        $stale = array_values(array_diff($existing, $published));
+
+        if ($stale !== []) {
+            $disk->delete($stale);
         }
     }
 
-    private function redactedTail(string $output): string
+    /**
+     * @param  array<string, array<string, string>>  $auth
+     * @return list<string>
+     */
+    private function sourceCredentials(array $auth): array
+    {
+        $credentials = [];
+
+        foreach ($auth as $hosts) {
+            foreach ($hosts as $credential) {
+                if ($credential !== '') {
+                    $credentials[] = $credential;
+                }
+            }
+        }
+
+        return array_values(array_unique($credentials));
+    }
+
+    /** @param list<string> $sourceCredentials */
+    private function redactedTail(string $output, array $sourceCredentials): string
     {
         $redacted = $output;
 
-        ServedRepo::query()
-            ->whereNotNull('source_credential')
-            ->get()
-            ->each(function (ServedRepo $repo) use (&$redacted): void {
-                if (blank($repo->source_credential)) {
-                    return;
-                }
-
-                $redacted = str_replace($repo->source_credential, '***', $redacted);
-            });
+        foreach ($sourceCredentials as $credential) {
+            $redacted = str_replace($credential, '***', $redacted);
+        }
 
         return mb_substr($redacted, -10000);
     }
