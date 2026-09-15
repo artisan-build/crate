@@ -14,6 +14,17 @@ managed_status() {
     [[ "${actual}" == "${expected}" ]] || fail "managed-${role}: expected HTTP ${expected}, observed ${actual}"
 }
 
+set_exact_age() {
+    local role="$1"
+    local seconds="$2"
+    local observe_at
+
+    observe_at="$(php "${CRATE_C1_DIR}/state/managed.php" set-age "${role}" "${seconds}" aligned)"
+    while [[ "$(date +%s)" -lt "${observe_at}" ]]; do
+        sleep 0.01
+    done
+}
+
 tls_status="$(curl --silent --show-error --cacert "${CRATE_C1_MANAGED_CERTIFICATE}" \
     --output /dev/null --write-out '%{http_code}' "https://127.0.0.1:${CRATE_C1_MANAGED_PORT}/managed-auth/v1/authorize")"
 [[ "${tls_status}" == "401" ]] || fail "managed TLS authority expected 401, observed ${tls_status}"
@@ -34,13 +45,13 @@ assert_status managed-handoff-session 200 "${CRATE_URL}/crate/repositories" --co
 pass managed-tls-handoff-exchange-callback
 
 before="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
-php "${CRATE_C1_DIR}/state/managed.php" set-age member 299
+set_exact_age member 299
 managed_status member 200 "${CRATE_URL}"
 after="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
 [[ "${after}" == "${before}" ]] || fail "freshness-4m59 unexpectedly contacted authority"
 pass freshness-4m59-cached
 
-php "${CRATE_C1_DIR}/state/managed.php" set-age member 300
+set_exact_age member 300
 managed_status member 200 "${CRATE_URL}"
 after="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
 [[ "${after}" == "$((before + 1))" ]] || fail "freshness-5m00 did not refresh exactly once"
@@ -50,14 +61,14 @@ shared="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
 pass freshness-5m00-shared-refresh
 
 php "${CRATE_C1_DIR}/state/managed.php" confirmation-status 503
-php "${CRATE_C1_DIR}/state/managed.php" set-age admin 1799
+set_exact_age admin 1799
 before="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
 managed_status admin 200 "${CRATE_URL}"
 after="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
 [[ "${after}" == "$((before + 1))" ]] || fail "freshness-29m59 did not observe transient authority failure"
 pass freshness-29m59-transient-grace
 
-php "${CRATE_C1_DIR}/state/managed.php" set-age admin 1800
+set_exact_age admin 1800
 before="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
 managed_status admin 401 "${CRATE_URL}"
 after="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"

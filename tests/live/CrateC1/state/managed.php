@@ -75,7 +75,8 @@ if ($operation === 'set-age') {
     }
 
     $user = User::query()->where('email', $role->value.'@crate-c1.example.test')->firstOrFail();
-    $at = now()->subSeconds((int) $seconds);
+    $observeAt = ($argv[4] ?? '') === 'aligned' ? now()->addSeconds(2)->startOfSecond() : now();
+    $at = $observeAt->copy()->subSeconds((int) $seconds);
     $user->forceFill([
         'role' => $role->value,
         'status' => 'active',
@@ -92,6 +93,9 @@ if ($operation === 'set-age') {
         (string) $user->scalpels_id,
     ]));
     Cache::forget('bfc:managed-refresh-attempt:'.$key);
+    if (($argv[4] ?? '') === 'aligned') {
+        echo $observeAt->getTimestamp();
+    }
     exit(0);
 }
 
