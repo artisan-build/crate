@@ -41,6 +41,8 @@ The freshness cases are named individually:
 
 Where the public package surface cannot deterministically set authority time or order responses, the corresponding case remains `VERIFIER_BLOCKED`; the harness does not fake a host-owned freshness boundary.
 
+The installed Built for Cloud managed-authority fixture serves real TLS and monotonic confirmation responses. Crate drives the 4:59, 5:00, 29:59, 30:00, and explicit-removal cases through real HTTP nodes against shared PostgreSQL/Redis state. The fixture is intentionally serial and cannot release an older confirmation after a newer response, so `freshness-stale-response-ordering` is reported as `VERIFIER_BLOCKED` rather than promoted from package-level evidence.
+
 ## Safety
 
 The shell runs with `set -euo pipefail` and never enables command tracing. Fixture secrets are generated for the run, are never printed, and are checked against retained build output and logs before cleanup. Set `CRATE_C1_KEEP=1` only when investigating a failed disposable run; the final summary then prints the non-secret workspace path and exact disposable resource names.

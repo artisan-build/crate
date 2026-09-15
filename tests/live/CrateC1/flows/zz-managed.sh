@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+managed_status() {
+    local role="$1"
+    local expected="$2"
+    local node="$3"
+    local actual
+
+    actual="$(curl --silent --show-error --cookie "$(role_jar "${role}")" --header 'Accept: application/json' \
+        --output /dev/null --write-out '%{http_code}' "${node}/crate/repositories")"
+    [[ "${actual}" != 5* ]] || fail "managed-${role}: denial returned ${actual}"
+    [[ "${actual}" == "${expected}" ]] || fail "managed-${role}: expected HTTP ${expected}, observed ${actual}"
+}
+
+tls_status="$(curl --silent --show-error --cacert "${CRATE_C1_MANAGED_CERTIFICATE}" \
+    --output /dev/null --write-out '%{http_code}' "https://127.0.0.1:${CRATE_C1_MANAGED_PORT}/managed-auth/v1/authorize")"
+[[ "${tls_status}" == "401" ]] || fail "managed TLS authority expected 401, observed ${tls_status}"
+pass managed-authority-real-tls
+
+php "${CRATE_C1_DIR}/state/managed.php" activate
+php "${CRATE_C1_DIR}/state/managed.php" confirmation-status 200
+php "${CRATE_C1_DIR}/state/managed.php" membership-response active
+
+managed_jar="${WORK_DIR}/managed-entry.cookies"
+managed_entry="${WORK_DIR}/managed-entry.json"
+managed_entry_status="$(curl --silent --show-error --location --cacert "${CRATE_C1_MANAGED_CERTIFICATE}" \
+    --cookie-jar "${managed_jar}" --output "${managed_entry}" --write-out '%{http_code}' \
+    "${CRATE_URL}/bfc/managed/login?intended=%2Fcrate%2Frepositories")"
+[[ "${managed_entry_status}" == "200" ]] || fail "managed handoff expected 200, observed ${managed_entry_status}"
+php "${CRATE_C1_DIR}/state/managed.php" assert-managed-entry
+assert_status managed-handoff-session 200 "${CRATE_URL}/crate/repositories" --cookie "${managed_jar}"
+pass managed-tls-handoff-exchange-callback
+
+before="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
+php "${CRATE_C1_DIR}/state/managed.php" set-age member 299
+managed_status member 200 "${CRATE_URL}"
+after="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
+[[ "${after}" == "${before}" ]] || fail "freshness-4m59 unexpectedly contacted authority"
+pass freshness-4m59-cached
+
+php "${CRATE_C1_DIR}/state/managed.php" set-age member 300
+managed_status member 200 "${CRATE_URL}"
+after="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
+[[ "${after}" == "$((before + 1))" ]] || fail "freshness-5m00 did not refresh exactly once"
+managed_status member 200 "http://127.0.0.1:${CRATE_C1_NODE2_PORT}"
+shared="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
+[[ "${shared}" == "${after}" ]] || fail "freshness-5m00 was not shared across nodes"
+pass freshness-5m00-shared-refresh
+
+php "${CRATE_C1_DIR}/state/managed.php" confirmation-status 503
+php "${CRATE_C1_DIR}/state/managed.php" set-age admin 1799
+before="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
+managed_status admin 200 "${CRATE_URL}"
+after="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
+[[ "${after}" == "$((before + 1))" ]] || fail "freshness-29m59 did not observe transient authority failure"
+pass freshness-29m59-transient-grace
+
+php "${CRATE_C1_DIR}/state/managed.php" set-age admin 1800
+before="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
+managed_status admin 401 "${CRATE_URL}"
+after="$(php "${CRATE_C1_DIR}/state/managed.php" confirmation-count)"
+[[ "${after}" == "$((before + 1))" ]] || fail "freshness-30m00 did not consult authority"
+managed_status admin 401 "http://127.0.0.1:${CRATE_C1_NODE2_PORT}"
+pass freshness-30m00-denial-session-end
+
+php "${CRATE_C1_DIR}/state/managed.php" confirmation-status 200
+php "${CRATE_C1_DIR}/state/managed.php" membership-response removed
+php "${CRATE_C1_DIR}/state/managed.php" set-age owner 300
+managed_status owner 401 "${CRATE_URL}"
+php "${CRATE_C1_DIR}/state/managed.php" assert-membership owner removed
+managed_status owner 401 "http://127.0.0.1:${CRATE_C1_NODE2_PORT}"
+pass freshness-explicit-removal
+
+verifier_blocked freshness-stale-response-ordering "installed serial fixture cannot release an older confirmation after a newer response"

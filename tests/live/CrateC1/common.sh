@@ -68,6 +68,18 @@ wait_for_http() {
     fail "HTTP endpoint did not become ready: ${url}"
 }
 
+wait_for_file() {
+    local path="$1"
+    local attempt
+
+    for ((attempt = 1; attempt <= 120; attempt++)); do
+        [[ -s "${path}" ]] && return 0
+        sleep 0.25
+    done
+
+    fail "file did not become ready: ${path}"
+}
+
 assert_status() {
     local name="$1"
     local expected="$2"

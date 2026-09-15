@@ -27,6 +27,7 @@ Harness controls:
   CRATE_C1_NODE2_PORT           default 32802
   CRATE_C1_STUB_PORT            default 32803
   CRATE_C1_FIXTURE_PORT         default 32804
+  CRATE_C1_MANAGED_PORT         default 32805
   CRATE_C1_ALLOW_NON_LOOPBACK   default 0
   CRATE_C1_KEEP                 default 0
 USAGE
@@ -50,6 +51,7 @@ export CRATE_C1_NODE1_PORT="${CRATE_C1_NODE1_PORT:-32801}"
 export CRATE_C1_NODE2_PORT="${CRATE_C1_NODE2_PORT:-32802}"
 export CRATE_C1_STUB_PORT="${CRATE_C1_STUB_PORT:-32803}"
 export CRATE_C1_FIXTURE_PORT="${CRATE_C1_FIXTURE_PORT:-32804}"
+export CRATE_C1_MANAGED_PORT="${CRATE_C1_MANAGED_PORT:-32805}"
 export CRATE_C1_S3_ACCESS_KEY="${CRATE_C1_S3_ACCESS_KEY:-cratec1access}"
 export CRATE_C1_S3_SECRET_KEY="${CRATE_C1_S3_SECRET_KEY:-cratec1secretkey}"
 
@@ -73,6 +75,8 @@ export CRATE_C1_AUTHORITY_STATE="${WORK_DIR}/authority-state.json"
 export CRATE_C1_AUTHORITY_LOG="${WORK_DIR}/authority-requests.jsonl"
 export CRATE_C1_FIXTURE_SECRET="$(php -r 'echo bin2hex(random_bytes(24));')"
 export CRATE_C1_CONTROL_TOKEN="$(php -r 'echo bin2hex(random_bytes(24));')"
+export CRATE_C1_MANAGED_STATUS="${WORK_DIR}/managed-authority-status.json"
+export CRATE_C1_MANAGED_CERTIFICATE="${WORK_DIR}/managed-authority.pem"
 
 trap cleanup EXIT INT TERM
 
@@ -172,6 +176,21 @@ php -S "127.0.0.1:${CRATE_C1_FIXTURE_PORT}" -t "${FIXTURE_HTTP}" >"${WORK_DIR}/f
 register_pid "$!"
 wait_for_http "${CRATE_C1_FIXTURE_HTTP_URL}/info/refs"
 pass disposable-git-repository
+
+export BFC_MANAGED_FIXTURE_CLIENT_SECRET="$(fixture_secret managed-client)"
+export BFC_MANAGED_FIXTURE_APP_KEY="fixture-app-key"
+export BFC_MANAGED_CLIENT_APP_KEY="client-app-key"
+export BUILT_FOR_CLOUD_MANAGED_CLIENT_SECRET="${BFC_MANAGED_FIXTURE_CLIENT_SECRET}"
+export BUILT_FOR_CLOUD_MANAGED_CA_BUNDLE="${CRATE_C1_MANAGED_CERTIFICATE}"
+php "${APP_DIR}/vendor/artisan-build/built-for-cloud/tests/Live/managed-authority.php" \
+    "${CRATE_C1_MANAGED_PORT}" \
+    "${CRATE_C1_MANAGED_CERTIFICATE}" \
+    "${CRATE_URL}" \
+    "${CRATE_C1_MANAGED_STATUS}" >"${WORK_DIR}/managed-authority.log" 2>&1 &
+register_pid "$!"
+wait_for_file "${CRATE_C1_MANAGED_CERTIFICATE}"
+wait_for_file "${CRATE_C1_MANAGED_STATUS}"
+pass disposable-managed-tls-authority
 
 php -S "127.0.0.1:${CRATE_C1_STUB_PORT}" "${CRATE_C1_DIR}/authority-stub.php" >"${WORK_DIR}/authority.log" 2>&1 &
 register_pid "$!"
