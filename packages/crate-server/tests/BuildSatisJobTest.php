@@ -116,6 +116,19 @@ it('redacts source credentials before persisting process output', function (): v
         ->and($build->output)->toContain('***');
 });
 
+it('writes empty Composer authentication as an object', function (): void {
+    Storage::fake('crate-archive');
+    ServedRepo::factory()->create(['name' => 'vendor/package']);
+
+    Process::fake(function (PendingProcess $process) {
+        expect(trim(File::get($process->path.'/auth.json')))->toBe('{}');
+
+        return Process::result('satis built');
+    });
+
+    app(BuildSatis::class)->handle(app(SatisConfigGenerator::class));
+});
+
 it('deletes temporary auth json after successful and failed builds', function (int $exitCode): void {
     Storage::fake('crate-archive');
     ServedRepo::factory()->create([

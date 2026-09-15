@@ -124,7 +124,8 @@ export MAIL_MAILER=log
 export LOG_CHANNEL=single
 export SCALPELS_URL="http://127.0.0.1:${CRATE_C1_STUB_PORT}"
 export CRATE_URL="http://127.0.0.1:${CRATE_C1_NODE1_PORT}"
-export CRATE_C1_FIXTURE_REPO_URL="http://127.0.0.1:${CRATE_C1_FIXTURE_PORT}/fixture.git"
+export CRATE_C1_FIXTURE_HTTP_URL="http://127.0.0.1:${CRATE_C1_FIXTURE_PORT}/fixture.git"
+export CRATE_C1_FIXTURE_REPO_URL="https://127.0.0.1:${CRATE_C1_FIXTURE_PORT}/fixture.git"
 
 composer install --working-dir="${APP_DIR}" --no-interaction --prefer-dist
 php "${APP_DIR}/artisan" migrate --force --no-interaction
@@ -164,9 +165,12 @@ git -C "${FIXTURE_WORK}" commit --quiet -m "fixture 1.0.0"
 git -C "${FIXTURE_WORK}" tag 1.0.0
 git clone --quiet --bare "${FIXTURE_WORK}" "${FIXTURE_HTTP}/fixture.git"
 git --git-dir="${FIXTURE_HTTP}/fixture.git" update-server-info
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0="url.file://${FIXTURE_HTTP}/fixture.git.insteadOf"
+export GIT_CONFIG_VALUE_0="${CRATE_C1_FIXTURE_REPO_URL}"
 php -S "127.0.0.1:${CRATE_C1_FIXTURE_PORT}" -t "${FIXTURE_HTTP}" >"${WORK_DIR}/fixture-http.log" 2>&1 &
 register_pid "$!"
-wait_for_http "${CRATE_C1_FIXTURE_REPO_URL}/info/refs"
+wait_for_http "${CRATE_C1_FIXTURE_HTTP_URL}/info/refs"
 pass disposable-git-repository
 
 php -S "127.0.0.1:${CRATE_C1_STUB_PORT}" "${CRATE_C1_DIR}/authority-stub.php" >"${WORK_DIR}/authority.log" 2>&1 &

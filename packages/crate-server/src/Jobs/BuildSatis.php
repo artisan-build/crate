@@ -63,7 +63,8 @@ final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQu
             $outputDir = $tempDir.'/output';
 
             File::put($configPath, json_encode($generator->generate($this->package), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-            File::put($authPath, json_encode($generator->authConfig(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $auth = $generator->authConfig();
+            File::put($authPath, json_encode($auth === [] ? (object) [] : $auth, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             File::ensureDirectoryExists($outputDir);
 
             if ($this->package !== null) {
