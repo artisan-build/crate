@@ -50,21 +50,21 @@ fork away; client-specific features are not backfilled into the OSS release.
 1. **Wrap Satis; do not reimplement Composer metadata.** Crate registers repos, generates a
    `satis.json` from its database, and shells out to Satis to produce the Composer v2 metadata and
    (mirrored) dist archives. Crate owns configuration, gating, and serving — Satis owns generation.
-2. **Credential-level access, not per-package ACLs.** Access is all-or-nothing: a valid, unexpired
-   credential grants `composer` access to **every** package the instance serves. There is no
-   per-package or per-vendor scoping in v1. This is exactly the `built-for-cloud` token model
-   (resolve-if-unexpired is the whole gate). "As simple as possible" is a product decision, not a
-   gap to close later.
-3. **Headless.** No app-specific web UI. Registry administration (add/remove served repos, trigger
-   builds) is CLI + admin-token HTTP API; credential issue/revoke is HTTP API. The base stays
+2. **Credential-level access, not per-package ACLs.** Access is all-or-nothing: an active Basic
+   credential bound to this installation and the fixed `crate.composer.consume` app purpose grants
+   Composer access to **every** package the instance serves. There is no per-package or per-vendor
+   scoping in v1. "As simple as possible" is a product decision, not a gap to close later.
+3. **Headless.** No app-specific web UI. Built for Cloud owns human authentication and credential
+   management; authenticated Crate HTTP actions manage repositories, source credentials, and builds.
+   The base stays
    `laravel-nodeless` for series consistency, but Crate ships **no Flux UI** and must **not** add
    `livewire/flux-pro` (free `livewire/flux` from the base is fine and unused) — so there is no Flux
    Pro CI-secret requirement.
-4. **Issue/revoke lives in `built-for-cloud` (shared).** The HTTP credential-management surface is
-   added to `built-for-cloud` over the existing `TokenRegistry`, so Sink/Matte inherit it. Crate
-   consumes it; it does not re-implement token issuance.
+4. **Credential lifecycle lives in `built-for-cloud` (shared).** Crate declares only the fixed app
+   purpose and allowed Basic self-service kind, and uses the package's personal, installation, and
+   service-authorized issue/list/rotate/revoke surfaces. Crate does not implement another lifecycle.
 5. **Served repos are DB-managed (API/CLI), not a committed `satis.json`.** The served-repo list
-   lives in Postgres; add/remove with an Artisan command or an admin-token HTTP endpoint — no
+   lives in Postgres; add/remove with an Artisan command or the role-gated human HTTP surface — no
    redeploy to add a package. Crate **generates** `satis.json` from the DB on each build. Each served
    repo carries its own encrypted source-read credential (GitHub token / deploy key).
 6. **The gate covers metadata AND dist.** Composer fetches `packages.json` / `p2` provider files and
@@ -94,11 +94,11 @@ fork away; client-specific features are not backfilled into the OSS release.
 
 ```
   Org's own app (billing/gating)
-    └─ crate-client (issuer SDK) ──► POST/DELETE /api/credentials  (admin-token auth)
-                                          │  built-for-cloud ManageTokens over TokenRegistry
+    └─ crate-client (issuer SDK) ──► /bfc/credentials  (service authorization)
+                                          │  fixed installation subject + Basic/consumption
                                           ▼
-                                    api_tokens (hashed)         ◄── credential resolves here
-  Operator (CLI / admin API)
+                              built-for-cloud credentials      ◄── credential resolves here
+  Operator (CLI / authenticated HTTP)
     └─ crate:repos:add vendor/pkg ──► served_repos (DB, encrypted source cred)
                                           │
                                           ▼
@@ -110,8 +110,8 @@ fork away; client-specific features are not backfilled into the OSS release.
                                           │
   Customer app (composer)                 ▼
     composer require vendor/pkg ──► GET /packages.json · /p2/… · /dist/…
-       auth.json http-basic  ─────────────┤  GATE: http-basic password → TokenRegistry
-       (password = credential)            │  valid+unexpired? → stream metadata/archive : 401
+       auth.json http-basic  ─────────────┤  GATE: fixed-purpose installation/personal Basic
+       (password = credential)            │  active and installation-bound? → stream : 401
                                           ▼
                                     (served from object storage, gated)
 ```
@@ -162,11 +162,13 @@ Additive-within-major discipline (no field removed/repurposed in a major); round
   `COMPOSER_AUTH`. A small Artisan command `crate:auth` writes it for CI/deploy environments.
 
 **Issuer SDK** (drop into the org's own app — the product surface):
-- `CrateIssuer` (config: base URL + an admin token) with:
-  - `issue(string $name, ?CarbonInterface $expiresAt = null): Credential`
-  - `revoke(string $name): void`
+- `CrateIssuer` (config: base URL + service credential + installation subject reference) with:
+  - `issue(string $name, ?CarbonInterface $expiresAt = null): array`
+  - `rotate(string $credentialId, bool $emergency = false): array`
+  - `revoke(string $credentialId): void`
   - `list(): Collection<Credential-metadata>` (never returns plaintext)
-- Thin HTTP client over the built-for-cloud endpoint (step 3). Typed, retryable, throws on non-2xx.
+- Thin HTTP client over `/bfc/credentials`. Fixed Basic kind/consumption purpose, retryable, and
+  throws on non-2xx; the client-ID header is metadata only.
 - No payment/billing logic here — that is the org's to build around these calls.
 
 ## `crate-server` — registry
@@ -175,7 +177,8 @@ Additive-within-major discipline (no field removed/repurposed in a major); round
 - **Commands:** `crate:repos:add {name} {url} {--source-token=} {--type=vcs}`,
   `crate:repos:remove {name}`, `crate:repos:list`, `crate:build {package?}` (regenerate `satis.json`
   from DB, run Satis; optional single-package arg for incremental), `crate:install` (scaffold/provision).
-- **Admin HTTP API** (admin-token auth via built-for-cloud): served-repo CRUD + `POST /api/build`.
+- **Human HTTP API:** every Member lists repositories/builds and replaces/clears source credentials;
+  only Admin/Owner add or remove repositories. Shell commands run as explicit system authority.
 - **Satis integration:** `SatisConfigGenerator` writes `satis.json` from `served_repos`
   (`require-dist-mirroring: true`, `archive` config, `homepage = CRATE_URL`, per-repo auth injected
   from the encrypted source creds into a scoped Composer `auth.json` for the build). `BuildSatis`
@@ -183,30 +186,25 @@ Additive-within-major discipline (no field removed/repurposed in a major); round
   archives to the object-storage disk, records a `builds` row.
 - **Gated registry routes** (the whole point): `GET /packages.json`, `GET /p2/{vendor}/{package}.json`
   (+ `~dev` variants), `GET /dist/{path}` — all behind `EnsureValidCredential` middleware that reads
-  the request's HTTP-Basic password, resolves it via `TokenRegistry`, and 401s on miss/expiry.
+  the request's HTTP-Basic password, resolves the fixed unified credential purpose, and returns an
+  indistinguishable 401 for invalid credentials.
   Metadata + archives are streamed from the object-storage disk.
 - **Rebuild triggers:** on served-repo mutation (dispatch incremental `BuildSatis`), plus a scheduled
   full rebuild (`crate:build` nightly). GitHub push webhook → rebuild is **deferred to v2**.
 
-## `built-for-cloud` additions (separate PR in that repo)
+## Unified-auth dependencies
 
-- **Token abilities.** Add a nullable `abilities` (json) column to `api_tokens`. A token with the
-  `admin` ability may manage tokens; tokens without it are registry-access-only. Default = no
-  abilities (access only). Backfill-safe migration.
-- **HTTP `ManageTokens` controller** over `TokenRegistry`, behind an `EnsureAdminToken` middleware
-  (bearer/basic token that resolves AND carries the `admin` ability):
-  - `POST /api/credentials` `{name, expires_at?}` → `201 {name, plaintext, expires_at}` (plaintext
-    once; only the hash is persisted).
-  - `DELETE /api/credentials/{name}` → `204` (revoke; records `revoked_at`).
-  - `GET /api/credentials` → `200 [{name, last_used_at, expires_at, revoked_at}]` (no plaintext).
-- Routes are opt-in (published/registered by the consuming app) so Sink/Matte are unaffected unless
-  they mount them. Keep additive-within-major.
+- `artisan-build/built-for-cloud` supplies the canonical human identity/session schema, standalone
+  and managed authority modes, and the unified personal/installation/service credential lifecycle.
+- `artisan-build/bfc-client` supplies canonical client-identity and contract-version headers.
+- Crate declares `crate.composer.consume` (wire purpose `consumption`) and permits Basic self-service
+  issuance. Client identity remains metadata, never authorization.
 
 ---
 
 ## Data model
 
-**built-for-cloud** (existing `api_tokens`, hashed) — **+ `abilities` json nullable** (this build).
+**built-for-cloud** owns the canonical users, authority, credential, audit, and transition tables.
 
 **crate-server**
 - `served_repos`: `id`, `name` (unique, `vendor/package`), `url`, `type`, `source_credential`
@@ -227,8 +225,6 @@ App config only (never set Cloud-injected resource env — DB/QUEUE/CACHE/FILESY
 - `CRATE_ARCHIVE_DISK` — object-storage disk for Satis output + mirrored archives (default the
   Cloud-injected object store).
 - `CRATE_SATIS_PATH` — path to the isolated Satis tool installed by the build step.
-- `CRATE_ADMIN_TOKEN` — bootstrap admin credential for the issue/revoke API (or provision a
-  built-for-cloud `admin`-ability token via `token:create`).
 - Per-repo source creds live in the DB (encrypted), not env.
 
 ---
@@ -239,8 +235,8 @@ App config only (never set Cloud-injected resource env — DB/QUEUE/CACHE/FILESY
 # Build step (installs the isolated Satis tool + ensures git/composer present):
 composer create-project composer/satis {CRATE_SATIS_PATH} --no-dev   # or a pinned release
 
-# On the Crate environment (via built-for-cloud + laravel-cloud-deploy skill):
-php artisan token:create ci --abilities=admin      # admin token for the issuer SDK
+# Local placeholder only; Ed performs any real re-mint after deploy:
+php artisan bfc:credential:mint ... --local        # crate.composer.consume, Basic
 php artisan crate:repos:add acme/widget https://github.com/acme/widget.git --source-token=…
 php artisan crate:build                            # first full build
 
@@ -263,17 +259,16 @@ has `git` and `composer` available for Satis.
    `.github/workflows/{tests.yml,lint.yml,release.yml}`; `composer ready` green at root. release.yml
    = `v*` tag → `kibble:split` to the three mirrors.
 2. **crate-contracts.** DTOs + enums above, with round-trip tests.
-3. **built-for-cloud additions** (PR in `artisan-build/built-for-cloud`): `abilities` column +
-   `ManageTokens` HTTP controller + `EnsureAdminToken` middleware. Tag a release; bump the crate
-   constraint.
+3. **built-for-cloud adoption:** consume the published unified-auth and client-identity releases;
+   declare Crate's fixed purpose and Basic self-service policy.
 4. **crate-server: served repos.** `served_repos` model/migration + `crate:repos:*` commands +
-   admin-token HTTP CRUD. Encrypted source creds.
+   role-gated human HTTP actions. Encrypted source creds.
 5. **crate-server: satis generation + build.** `SatisConfigGenerator` + `BuildSatis` job +
    `crate:build` (incremental + full) + dist mirroring to the object-storage disk + scheduled
    rebuild. Prove the isolated-Satis Process invocation on a Cloud worker early (the series'
    "does it run on Cloud" gate — low risk, pure PHP + git).
 6. **crate-server: the gated registry routes.** `EnsureValidCredential` middleware (http-basic →
-   TokenRegistry) + `GET /packages.json` `/p2/…` `/dist/…` streamed from object storage. End-to-end
+   unified Basic resolver) + `GET /packages.json` `/p2/…` `/dist/…` streamed from object storage. End-to-end
    test: register a real private repo, issue a credential, `composer require` through the gate,
    revoke, confirm 401.
 7. **crate-client.** Consumer composer-auth helper (`crate:auth`) + the issuer SDK (`CrateIssuer`)
