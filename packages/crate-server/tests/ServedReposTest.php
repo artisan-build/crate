@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 use ArtisanBuild\CrateContracts\RepoStatus;
 use ArtisanBuild\CrateContracts\RepoType;
+use ArtisanBuild\CrateServer\Jobs\BuildSatis;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
 use Carbon\CarbonInterface;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -47,6 +49,8 @@ it('casts model fields and encrypts source credentials at rest', function (): vo
 });
 
 it('adds a served repo from the console command', function (): void {
+    Bus::fake();
+
     $this->artisan('crate:repos:add', [
         'name' => 'vendor/package',
         'url' => 'https://github.com/vendor/package',
@@ -62,6 +66,9 @@ it('adds a served repo from the console command', function (): void {
         ->and($repo->status)->toBe(RepoStatus::Pending)
         ->and($repo->source_credential)->toBe('ghp_secretvalue')
         ->and($raw->source_credential)->not->toBe('ghp_secretvalue');
+
+    Bus::assertDispatched(BuildSatis::class, fn (BuildSatis $job): bool => $job->package === 'vendor/package'
+        && $job->trigger === 'repository-added');
 });
 
 it('rejects duplicate served repo names', function (): void {
