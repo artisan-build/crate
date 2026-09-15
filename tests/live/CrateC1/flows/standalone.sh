@@ -4,8 +4,13 @@ set -euo pipefail
 
 pass fresh-postgres-thin-host-schema
 
-declare -A ROLE_JARS
-declare -A ROLE_TOKENS
+role_jar() {
+    printf '%s/%s.cookies' "${WORK_DIR}" "$1"
+}
+
+role_token() {
+    form_value "${WORK_DIR}/$1-login.html" _token
+}
 
 for role in owner admin member; do
     jar="${WORK_DIR}/${role}.cookies"
@@ -18,17 +23,15 @@ for role in owner admin member; do
         --data-urlencode "email=${role}@crate-c1.example.test" \
         --data-urlencode "password=$(fixture_secret "password-${role}")")"
     [[ "${status}" == "302" ]] || fail "standalone-${role}-login expected 302, observed ${status}"
-    ROLE_JARS["${role}"]="${jar}"
-    ROLE_TOKENS["${role}"]="${csrf}"
     assert_status "${role}-repository-list" 200 "${CRATE_URL}/crate/repositories" --cookie "${jar}"
     assert_status "${role}-build-list" 200 "${CRATE_URL}/crate/builds" --cookie "${jar}"
 done
 pass standalone-role-sessions
 
 before="$(php "${CRATE_C1_DIR}/state/seed.php" count-repositories)"
-member_status="$(curl --silent --show-error --cookie "${ROLE_JARS[member]}" --output /dev/null --write-out '%{http_code}' \
+member_status="$(curl --silent --show-error --cookie "$(role_jar member)" --output /dev/null --write-out '%{http_code}' \
     --request POST "${CRATE_URL}/crate/repositories" \
-    --data-urlencode "_token=${ROLE_TOKENS[member]}" \
+    --data-urlencode "_token=$(role_token member)" \
     --data-urlencode 'name=crate-c1/forbidden' \
     --data-urlencode "url=${CRATE_C1_FIXTURE_REPO_URL}")"
 [[ "${member_status}" == "403" ]] || fail "member-repository-add expected 403, observed ${member_status}"
@@ -36,9 +39,9 @@ member_status="$(curl --silent --show-error --cookie "${ROLE_JARS[member]}" --ou
 pass member-add-denied-without-mutation
 
 owner_add="${WORK_DIR}/owner-add.json"
-owner_status="$(curl --silent --show-error --cookie "${ROLE_JARS[owner]}" --output "${owner_add}" --write-out '%{http_code}' \
+owner_status="$(curl --silent --show-error --cookie "$(role_jar owner)" --output "${owner_add}" --write-out '%{http_code}' \
     --request POST "${CRATE_URL}/crate/repositories" \
-    --data-urlencode "_token=${ROLE_TOKENS[owner]}" \
+    --data-urlencode "_token=$(role_token owner)" \
     --data-urlencode 'name=crate-c1/fixture' \
     --data-urlencode "url=${CRATE_C1_FIXTURE_REPO_URL}")"
 [[ "${owner_status}" == "201" ]] || fail "owner repository add expected 201, observed ${owner_status}"
