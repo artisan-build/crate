@@ -7,9 +7,8 @@ This package keeps the wire shapes stable without making either side depend on t
 ## DTOs
 
 - `ArtisanBuild\CrateContracts\ServedRepo`: `name`, `url`, `type`, and `status` for a repository served by Crate.
-- `ArtisanBuild\CrateContracts\Credential`: `name`, one-time `plaintext`, and nullable `expires_at` for credential issue responses.
 
-Both DTOs support:
+The repository DTO supports:
 
 - `make(...)`
 - `toArray()`
@@ -18,6 +17,8 @@ Both DTOs support:
 - `fromJson(...)`
 
 Invalid payloads throw package exceptions instead of silently accepting malformed data.
+
+Credential wire shapes are owned by `artisan-build/built-for-cloud`'s unified credential store. Crate does not define a second credential DTO or lifecycle. Unified summaries carry stable IDs, kind, purpose, subject, lifecycle, rotation, and presentation metadata; issue and rotation responses carry reveal-once delivery separately.
 
 ## Enums
 

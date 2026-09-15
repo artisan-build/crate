@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Console\Commands\CrateInstallCommand;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -16,7 +17,9 @@ class AppServiceProvider extends ServiceProvider
     #[\Override]
     public function register(): void
     {
-        //
+        if ($this->app->runningInConsole()) {
+            $this->commands([CrateInstallCommand::class]);
+        }
     }
 
     /**

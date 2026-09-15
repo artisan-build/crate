@@ -32,14 +32,12 @@ it('writes only crate app env values in non-interactive mode', function (): void
         '--url' => 'https://crate.example.com',
         '--archive-disk' => 'crate-archive',
         '--satis-path' => '/app/vendor/bin/satis/bin/satis',
-        '--credential-api' => 'true',
     ])->assertSuccessful();
 
     expect(crateReadEnv($path))->toBe([
         'CRATE_URL' => 'https://crate.example.com',
         'CRATE_ARCHIVE_DISK' => 'crate-archive',
         'CRATE_SATIS_PATH' => '/app/vendor/bin/satis/bin/satis',
-        'BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED' => 'true',
     ])->not->toHaveKeys([
         'DB_CONNECTION',
         'QUEUE_CONNECTION',
@@ -57,7 +55,6 @@ it('is idempotent when the desired values are already configured', function (): 
         '--url' => 'https://crate.example.com',
         '--archive-disk' => 'crate-archive',
         '--satis-path' => '/app/vendor/bin/satis/bin/satis',
-        '--credential-api' => 'true',
     ];
 
     $this->artisan('crate:install', $arguments)->assertSuccessful();
@@ -106,14 +103,12 @@ it('writes answered values interactively', function (): void {
         ->expectsQuestion('Crate public URL', 'https://crate.example.com')
         ->expectsQuestion('Crate archive disk', 'crate-archive')
         ->expectsQuestion('Satis binary path', '/app/vendor/bin/satis/bin/satis')
-        ->expectsQuestion('Enable credential API', true)
         ->assertSuccessful();
 
     expect(crateReadEnv($path))->toBe([
         'CRATE_URL' => 'https://crate.example.com',
         'CRATE_ARCHIVE_DISK' => 'crate-archive',
         'CRATE_SATIS_PATH' => '/app/vendor/bin/satis/bin/satis',
-        'BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED' => 'true',
     ]);
 });
 
@@ -162,16 +157,4 @@ it('round-trips a backslash-bearing value idempotently', function (): void {
         ->doesntExpectOutput('Kept existing CRATE_SATIS_PATH; pass --force to overwrite.')
         ->expectsOutput('Crate is already configured; no changes.')
         ->assertSuccessful();
-});
-
-it('writes a false credential api toggle', function (): void {
-    $path = crateTempEnv();
-
-    $this->artisan('crate:install', [
-        '--no-interaction' => true,
-        '--path' => $path,
-        '--credential-api' => 'false',
-    ])->assertSuccessful();
-
-    expect(crateReadEnv($path)['BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED'])->toBe('false');
 });

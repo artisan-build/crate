@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use ArtisanBuild\BuiltForCloud\Commands\Concerns\WritesInstallEnv;
-use Illuminate\Console\Command;
+use ArtisanBuild\BuiltForCloud\Commands\SystemAuthorityCommand;
 
-final class CrateInstallCommand extends Command
+final class CrateInstallCommand extends SystemAuthorityCommand
 {
     use WritesInstallEnv;
 
@@ -15,7 +15,6 @@ final class CrateInstallCommand extends Command
         {--url= : Public Crate base URL}
         {--archive-disk= : Crate archive filesystem disk name}
         {--satis-path= : Path to the isolated Satis binary}
-        {--credential-api= : Enable the credential API (true or false)}
         {--force : Overwrite existing values without prompting}
         {--path= : Path to the env file to write}';
 
@@ -39,11 +38,6 @@ final class CrateInstallCommand extends Command
             'option' => 'satis-path',
             'prompt' => 'Satis binary path',
             'default' => 'satis-tool/bin/satis',
-        ],
-        'BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED' => [
-            'option' => 'credential-api',
-            'prompt' => 'Enable credential API',
-            'default' => 'true',
         ],
     ];
 
@@ -143,10 +137,6 @@ final class CrateInstallCommand extends Command
 
         $default = $current ?? $this->defaultValue($definition);
 
-        if ($key === 'BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED') {
-            return $this->confirm($definition['prompt'], $this->truthy($default)) ? 'true' : 'false';
-        }
-
         return $this->normalizeValue($key, (string) $this->ask($definition['prompt'], $default));
     }
 
@@ -164,16 +154,7 @@ final class CrateInstallCommand extends Command
 
     private function normalizeValue(string $key, string $value): string
     {
-        if ($key === 'BUILT_FOR_CLOUD_CREDENTIAL_API_ENABLED') {
-            return $this->truthy($value) ? 'true' : 'false';
-        }
-
         return $value;
-    }
-
-    private function truthy(string $value): bool
-    {
-        return filter_var($value, FILTER_VALIDATE_BOOL);
     }
 
     private function mayOverwrite(string $key, ?string $current): bool

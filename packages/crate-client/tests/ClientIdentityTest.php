@@ -7,50 +7,30 @@ use ArtisanBuild\CrateClient\CrateIssuer;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
-it('sends the BfC client identity header when issuing a credential', function (): void {
+it('attaches canonical client identity metadata to every issuer verb', function (): void {
     Http::fake([
-        'crate.example.com/api/credentials' => Http::response([
-            'name' => 'build-bot',
-            'plaintext' => 'ctok_new_secret',
-            'expires_at' => null,
-        ], 201),
+        'https://crate.example.com/bfc/credentials' => Http::response(['credential' => [], 'delivery' => []], 201),
+        'https://crate.example.com/bfc/credentials/*/rotate' => Http::response(['credential' => [], 'delivery' => []], 201),
+        'https://crate.example.com/bfc/credentials/*' => Http::response(null, 204),
     ]);
 
-    CrateIssuer::fromConfig()->issue('build-bot');
+    $issuer = CrateIssuer::fromConfig();
+    $issuer->issue('build bot');
+    $issuer->list();
+    $issuer->rotate('credential-uuid');
+    $issuer->revoke('credential-uuid');
 
-    Http::assertSent(fn (Request $request): bool => $request->url() === 'https://crate.example.com/api/credentials'
-        && $request->header(BfcHeaders::CLIENT_ID) === ['crate-install-abc123']
-        && $request->hasHeader('Authorization', 'Bearer admin_secret'));
+    Http::assertSentCount(4);
+    Http::assertSent(fn (Request $request): bool => $request->header(BfcHeaders::CLIENT_ID) === ['crate-install-abc123']
+        && $request->hasHeader('Authorization', 'Bearer service_secret'));
 });
 
-it('sends the BfC client identity header when revoking a credential', function (): void {
-    Http::fake([
-        'crate.example.com/api/credentials/build-bot' => Http::response(null, 204),
-    ]);
-
-    CrateIssuer::fromConfig()->revoke('build-bot');
-
-    Http::assertSent(fn (Request $request): bool => $request->header(BfcHeaders::CLIENT_ID) === ['crate-install-abc123']);
-});
-
-it('sends the BfC client identity header when listing credentials', function (): void {
-    Http::fake([
-        'crate.example.com/api/credentials' => Http::response([], 200),
-    ]);
-
-    CrateIssuer::fromConfig()->list();
-
-    Http::assertSent(fn (Request $request): bool => $request->header(BfcHeaders::CLIENT_ID) === ['crate-install-abc123']);
-});
-
-it('resolves the identity through bfc-client rather than hard-coding it', function (): void {
+it('treats client identity as metadata rather than request authority', function (): void {
     config()->set('bfc-client.identity', 'some-other-install');
-
-    Http::fake([
-        'crate.example.com/api/credentials' => Http::response([], 200),
-    ]);
+    Http::fake(['https://crate.example.com/bfc/credentials' => Http::response([])]);
 
     CrateIssuer::fromConfig()->list();
 
-    Http::assertSent(fn (Request $request): bool => $request->header(BfcHeaders::CLIENT_ID) === ['some-other-install']);
+    Http::assertSent(fn (Request $request): bool => $request->header(BfcHeaders::CLIENT_ID) === ['some-other-install']
+        && $request->hasHeader('Authorization', 'Bearer service_secret'));
 });

@@ -7,7 +7,7 @@ See the [default integration guide](docs/integrate/default.md) for agent-ready i
 This package has two surfaces:
 
 - Consumer auth helper: write Composer HTTP Basic auth for a Crate registry.
-- Issuer SDK: call a Crate deployment's admin-token gated `/api/credentials` endpoint.
+- Issuer SDK: call a Crate deployment's unified `/bfc/credentials` endpoint with an operator service credential.
 
 ## Consumer Helper
 
@@ -64,7 +64,8 @@ Configure the issuer client:
 
 ```bash
 CRATE_ISSUER_URL=https://crate.example.com
-CRATE_ADMIN_TOKEN=admin-ability-token
+CRATE_SERVICE_TOKEN=operator-service-credential
+CRATE_ISSUER_SUBJECT_REF=build-bot
 CRATE_ISSUER_RETRIES=2
 CRATE_ISSUER_RETRY_SLEEP=100
 ```
@@ -78,15 +79,17 @@ use ArtisanBuild\CrateClient\CrateIssuer;
 
 $issuer = CrateIssuer::fromConfig();
 
-$credential = $issuer->issue('build-bot');
-$tokens = $issuer->list();
-$issuer->revoke('build-bot');
+$issued = $issuer->issue('build-bot');
+$credentials = $issuer->list();
+$rotated = $issuer->rotate($issued['credential']['id']);
+$issuer->revoke($rotated['credential']['id']);
 ```
 
 The SDK calls:
 
-- `POST /api/credentials` for `issue(...)`, returning an `ArtisanBuild\CrateContracts\Credential` with plaintext shown once.
-- `GET /api/credentials` for `list()`, returning metadata without plaintext.
-- `DELETE /api/credentials/{name}` for `revoke(...)`.
+- `POST /bfc/credentials` for `issue(...)`, fixed to installation-owned Basic `consumption` credentials.
+- `GET /bfc/credentials` for `list()`, returning summaries without secret material.
+- `POST /bfc/credentials/{id}/rotate` for `rotate(...)`, returning replacement delivery once.
+- `DELETE /bfc/credentials/{id}` for `revoke(...)`.
 
-Requests use Bearer auth with the configured admin token, accept JSON, retry transient failures according to config, and throw on non-2xx responses.
+Requests use Bearer auth with `CRATE_SERVICE_TOKEN`, accept JSON, carry bfc-client's canonical client identity and contract-version headers, retry according to config, and throw on non-2xx responses. The service credential needs the matching closed credential verb abilities. Client identity is metadata, not authorization.

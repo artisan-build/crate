@@ -58,7 +58,9 @@ The package registers Composer registry routes at the app root:
 
 All routes use `ArtisanBuild\CrateServer\Http\Middleware\EnsureValidCredential`, registered as `crate-server.credential`.
 
-Composer authenticates with HTTP Basic auth. The username is conventional and ignored; the password is the Crate credential. The middleware resolves that password through `ArtisanBuild\BuiltForCloud\TokenRegistry` and returns `401` with `WWW-Authenticate: Basic realm="Crate"` when the credential is missing, unknown, expired, or revoked.
+Composer authenticates with HTTP Basic auth. The username is presentation-only; the password resolves through Built for Cloud's unified credential guard. Only an active Basic credential mapped to the fixed app purpose `crate.composer.consume` is admitted. Missing, malformed, wrong-purpose, expired, revoked, removed-account, and otherwise invalid credentials receive the same `401` with `WWW-Authenticate: Basic realm="Crate"`, without streaming registry content.
+
+Account-owned credentials follow the canonical user's versioned role, status, authority generation, and managed freshness. Installation-owned credentials are creator-independent. Their installation boundary is possession in this deployment's installation-local credential store; `subject_ref` is an automation routing identity, not an installation ID.
 
 `RegistryFileController` streams files from the configured archive disk and output prefix:
 
@@ -80,4 +82,4 @@ Environment variables:
 - `CRATE_OUTPUT_DIR`: storage prefix for generated registry output. Defaults to `satis`.
 - `CRATE_DB_*`: optional separate database connection settings. If omitted, the app's default database connection is reused as `crate`.
 
-This package consumes `artisan-build/built-for-cloud` for token storage and credential resolution. The app mounts built-for-cloud's credential-management API separately via `config/built-for-cloud.php`.
+This package consumes `artisan-build/built-for-cloud` for the canonical credential store, Basic resolution, package-owned personal/installation credential UI, and the fixed `/bfc/credentials` API. `CrateCredentialDeclaration` implements `DeclaresSelfServiceMintPolicy`, admits only Basic self-service credentials, and maps `crate.composer.consume` to the package `consumption` purpose. Registry credentials carry no repository, source-secret, credential-management, transition, or shell authority.

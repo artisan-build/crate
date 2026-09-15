@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\CrateServer\Commands;
 
-use Illuminate\Console\Command;
+use ArtisanBuild\BuiltForCloud\Commands\SystemAuthorityCommand;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 
@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Process;
  * writes persist into the deploy artifact shipped to every instance; deploy
  * and post-deploy writes touch one ephemeral disk and are gone next deploy.
  */
-final class CrateInstallSatisCommand extends Command
+final class CrateInstallSatisCommand extends SystemAuthorityCommand
 {
     /**
      * The install directory, relative to the application base path. The Satis

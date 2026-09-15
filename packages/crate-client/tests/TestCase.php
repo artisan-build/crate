@@ -31,7 +31,8 @@ abstract class TestCase extends Orchestra
         $app['config']->set('crate-client.url', 'https://crate.example.com');
         $app['config']->set('crate-client.token', 'ctok_secret');
         $app['config']->set('crate-client.issuer.base_url', 'https://crate.example.com');
-        $app['config']->set('crate-client.issuer.admin_token', 'admin_secret');
+        $app['config']->set('crate-client.issuer.service_token', 'service_secret');
+        $app['config']->set('crate-client.issuer.subject_ref', 'customer-builds');
         $app['config']->set('crate-client.issuer.retries', 2);
         $app['config']->set('crate-client.issuer.retry_sleep_ms', 100);
         $app['config']->set('bfc-client.identity', 'crate-install-abc123');

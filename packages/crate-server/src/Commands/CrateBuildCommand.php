@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\CrateServer\Commands;
 
+use ArtisanBuild\BuiltForCloud\Commands\SystemAuthorityCommand;
 use ArtisanBuild\CrateServer\Jobs\BuildSatis;
-use Illuminate\Console\Command;
 
-final class CrateBuildCommand extends Command
+final class CrateBuildCommand extends SystemAuthorityCommand
 {
     protected $signature = 'crate:build {package?} {--trigger=manual}';
 
