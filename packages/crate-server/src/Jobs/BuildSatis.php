@@ -12,6 +12,7 @@ use ArtisanBuild\CrateServer\Models\ServedRepo;
 use ArtisanBuild\CrateServer\SatisConfigGenerator;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Foundation\Queue\Queueable as FoundationQueueable;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
@@ -47,7 +48,7 @@ final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQu
             'started_at' => now(),
         ]);
 
-        $servedRepo?->update(['status' => RepoStatus::Building]);
+        $this->repositoryQuery($servedRepo)->update(['status' => RepoStatus::Building]);
 
         $workingDir = storage_path('framework/cache/crate-satis');
         File::ensureDirectoryExists($workingDir);
@@ -88,7 +89,7 @@ final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQu
                     'output' => $output,
                     'finished_at' => now(),
                 ]);
-                $servedRepo?->update([
+                $this->repositoryQuery($servedRepo)->update([
                     'status' => RepoStatus::Active,
                     'last_built_at' => now(),
                 ]);
@@ -101,18 +102,26 @@ final class BuildSatis implements ShouldBeUnique, ShouldQueue, SystemAuthorityQu
                 'output' => $output,
                 'finished_at' => now(),
             ]);
-            $servedRepo?->update(['status' => RepoStatus::Failed]);
+            $this->repositoryQuery($servedRepo)->update(['status' => RepoStatus::Failed]);
         } catch (Throwable $throwable) {
             $build->update([
                 'status' => BuildStatus::Failed,
                 'output' => $this->redactedTail($throwable->getMessage()),
                 'finished_at' => now(),
             ]);
-            $servedRepo?->update(['status' => RepoStatus::Failed]);
+            $this->repositoryQuery($servedRepo)->update(['status' => RepoStatus::Failed]);
         } finally {
             File::delete($authPath);
             File::deleteDirectory($tempDir);
         }
+    }
+
+    /** @return Builder<ServedRepo> */
+    private function repositoryQuery(?ServedRepo $servedRepo): Builder
+    {
+        return $servedRepo === null
+            ? ServedRepo::query()
+            : ServedRepo::query()->whereKey($servedRepo->getKey());
     }
 
     private function seedOutputFromArchive(string $outputDir): void

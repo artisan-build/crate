@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use ArtisanBuild\CrateContracts\BuildStatus;
+use ArtisanBuild\CrateContracts\RepoStatus;
 use ArtisanBuild\CrateServer\Jobs\BuildSatis;
 use ArtisanBuild\CrateServer\Models\Build;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
@@ -14,7 +15,7 @@ use Illuminate\Support\Facades\Storage;
 
 it('records a succeeded full build and mirrors satis output', function (): void {
     Storage::fake('crate-archive');
-    ServedRepo::factory()->create(['name' => 'vendor/package']);
+    $repo = ServedRepo::factory()->create(['name' => 'vendor/package']);
 
     Process::fake(function (PendingProcess $process) {
         File::put($process->path.'/output/packages.json', '{"packages":[]}');
@@ -32,7 +33,9 @@ it('records a succeeded full build and mirrors satis output', function (): void 
         ->and($build->served_repo_id)->toBeNull()
         ->and($build->started_at)->not->toBeNull()
         ->and($build->finished_at)->not->toBeNull()
-        ->and($build->output)->toContain('satis built');
+        ->and($build->output)->toContain('satis built')
+        ->and($repo->refresh()->status)->toBe(RepoStatus::Active)
+        ->and($repo->last_built_at)->not->toBeNull();
 
     Storage::disk('crate-archive')->assertExists('satis/packages.json');
     Storage::disk('crate-archive')->assertExists('satis/dist/vendor/package/archive.zip');
@@ -82,7 +85,7 @@ it('seeds incremental builds from the existing archive output before mirroring',
 
 it('records a failed build for a failed process result', function (): void {
     Storage::fake('crate-archive');
-    ServedRepo::factory()->create(['name' => 'vendor/package']);
+    $repo = ServedRepo::factory()->create(['name' => 'vendor/package']);
 
     Process::fake([Process::result('satis failed', '', 1)]);
 
@@ -92,7 +95,8 @@ it('records a failed build for a failed process result', function (): void {
 
     expect($build->status)->toBe(BuildStatus::Failed)
         ->and($build->finished_at)->not->toBeNull()
-        ->and($build->output)->toContain('satis failed');
+        ->and($build->output)->toContain('satis failed')
+        ->and($repo->refresh()->status)->toBe(RepoStatus::Failed);
 });
 
 it('redacts source credentials before persisting process output', function (): void {
@@ -131,5 +135,6 @@ it('deletes temporary auth json after successful and failed builds', function (i
     app(BuildSatis::class)->handle(app(SatisConfigGenerator::class));
 
     expect($authPath)->toBeString()
-        ->and(File::exists($authPath))->toBeFalse();
+        ->and(File::exists($authPath))->toBeFalse()
+        ->and(File::exists(dirname($authPath)))->toBeFalse();
 })->with([0, 1]);
