@@ -40,8 +40,10 @@ function appendLog(string $path, array $record): void
     file_put_contents($path, json_encode($record, JSON_THROW_ON_ERROR)."\n", FILE_APPEND | LOCK_EX);
 }
 
-$method = filter_input(INPUT_SERVER, 'REQUEST_METHOD') ?: 'GET';
-$path = parse_url(filter_input(INPUT_SERVER, 'REQUEST_URI') ?: '/', PHP_URL_PATH) ?: '/';
+$server = $GLOBALS['_SERVER'] ?? [];
+$method = is_array($server) ? ($server['REQUEST_METHOD'] ?? 'GET') : 'GET';
+$requestUri = is_array($server) && is_string($server['REQUEST_URI'] ?? null) ? $server['REQUEST_URI'] : '/';
+$path = parse_url($requestUri, PHP_URL_PATH) ?: '/';
 
 if ($method === 'GET' && $path === '/health') {
     header('Content-Type: application/json');
