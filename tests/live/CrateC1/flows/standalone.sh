@@ -9,7 +9,7 @@ role_jar() {
 }
 
 role_token() {
-    form_value "${WORK_DIR}/$1-login.html" _token
+    form_value "${WORK_DIR}/$1-session.html" _token
 }
 
 for role in owner admin member; do
@@ -23,6 +23,8 @@ for role in owner admin member; do
         --data-urlencode "email=${role}@crate-c1.example.test" \
         --data-urlencode "password=$(fixture_secret "password-${role}")")"
     [[ "${status}" == "302" ]] || fail "standalone-${role}-login expected 302, observed ${status}"
+    curl --fail --silent --show-error --cookie "${jar}" --cookie-jar "${jar}" \
+        "${CRATE_URL}/bfc/ui" --output "${WORK_DIR}/${role}-session.html"
     assert_status "${role}-repository-list" 200 "${CRATE_URL}/crate/repositories" --cookie "${jar}"
     assert_status "${role}-build-list" 200 "${CRATE_URL}/crate/builds" --cookie "${jar}"
 done
