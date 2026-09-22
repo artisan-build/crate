@@ -1,103 +1,162 @@
+<p align="center">
+  <img src="art/icon.png" width="128" alt="crate icon">
+</p>
+
 # Crate
 
-Crate is a self-hosted, unmetered private Composer registry for Laravel, built to run on Laravel Cloud.
+Crate is a private Composer registry that you run in your own Laravel Cloud account. It uses [Satis](https://github.com/composer/satis) to build package metadata and mirrored archives, then protects every download with a revocable credential. It is a small, self-hosted alternative to a hosted private registry such as Private Packagist.
 
-It is a fork-and-deploy Satis wrapper behind a credential gate: register the private repositories you want to serve, build Composer metadata and mirrored dist archives, issue unified credentials, then point customer apps at your Crate host.
+## The Easy Way: Scalpels
 
-Crate is single-tenant by construction. Each deployment lives in your own Laravel Cloud account, with your own compute, database, queue, and object storage. It is the self-hosted floor below hosted products like Private Packagist and Anystack: no per-seat registry bill, no third-party registry holding your private packages, and no per-package ACLs. Access is credential-level in this release.
+[Scalpels](https://scalpels.app/products/crate) provisions Crate and connects it to Laravel Cloud for you. Use that path if you want a working registry without maintaining the deployment steps below.
 
-Crate is MIT licensed.
+## Run It Yourself
 
-## Deploying
+### Prerequisites
 
-See [`docs/deploy.md`](docs/deploy.md) for the Laravel Cloud deployment guide, including resource provisioning, `crate:install`, first-run commands, and customer-app consumption.
+- Git.
+- Composer 2.
+- 64-bit PHP 8.3 or newer with the GMP and SQLite extensions.
+- A Laravel Cloud account and a fork of this repository for deployment.
 
-Crate runs Satis as an isolated tool, so the deploy has to install one. Put `php artisan crate:install-satis` in the build command:
+### Local Development
 
-```bash
-composer install --no-dev --prefer-dist && php artisan crate:install-satis
-```
+1. Clone your fork and enter the project directory:
 
-It installs `composer/satis:dev-main` into `satis-tool/` — a separate Composer project with its own dependency tree, never required into the app's `vendor/` — and the `CRATE_SATIS_PATH` default already points at the executable it produces. It must run at build time: on Laravel Cloud only build-time filesystem writes persist into the deploy artifact.
+   ```bash
+   git clone https://github.com/YOUR-ACCOUNT/crate.git
+   cd crate
+   ```
 
-## What Ships
+2. Install the exact PHP dependencies recorded in `composer.lock`:
 
-- `artisan-build/crate-contracts`: framework-free DTOs and enums shared by the client and server packages.
-- `artisan-build/crate-client`: a consumer auth helper plus an issuer SDK for `/bfc/credentials`.
-- `artisan-build/crate-server`: served-repo storage, Satis config/build orchestration, and gated Composer registry routes.
-- `artisan-build/built-for-cloud`: the canonical user, versioned session-role, credential-store, lifecycle UI, and credential API implementation.
+   ```bash
+   composer install --no-interaction
+   ```
 
-Crate adds no application-specific account or credential UI. Built for Cloud owns login, membership, sessions, transitions, and personal and installation credential management under `/bfc/*`; Crate owns repository/build JSON endpoints and system-authority CLI commands.
+   Composer should finish with `Generating optimized autoload files` and discover the Crate packages.
 
-## Test Drive
+3. Create the local environment and SQLite database, then run the migrations:
 
-After deploying the app and provisioning Laravel Cloud resources, run the operator flow against your deployed Crate environment:
+   ```bash
+   cp -n .env.example .env
+   touch database/database.sqlite
+   php artisan key:generate
+   php artisan migrate --graceful
+   ```
 
-```bash
-php artisan crate:repos:add vendor/pkg https://github.com/vendor/pkg.git --source-token=...
-php artisan crate:build
-```
+   The migration command should finish without an error. `cp -n` preserves an existing `.env`.
 
-`crate:repos:add` stores the served package and encrypts the source credential. `crate:build` generates `satis.json` from the database and dispatches the Satis build job. These commands, the queue worker, scheduler, and Satis process run as explicit system authority, never as a synthetic human. The build writes Composer metadata and mirrored dist archives to the configured storage disk, served back through Crate rather than public object-storage URLs.
+4. Run the test suite:
 
-Owner, Admin, and Member users can manage personal and installation credentials in the package-owned UI. For an operator integration, use a unified operator service credential with the verb abilities needed by the request. The fixed API is `/bfc/credentials`; issue an installation-owned Composer credential with purpose `crate.composer.consume`:
+   ```bash
+   composer test
+   ```
 
-```bash
-curl -X POST "$CRATE_URL/bfc/credentials" \
-  -H "Authorization: Bearer $CRATE_SERVICE_TOKEN" \
-  -H "Accept: application/json" \
-  -H "Content-Type: application/json" \
-  -d '{"subject_type":"installation","subject_ref":"build-bot","kind":"basic","purpose":"consumption","name":"build-bot"}'
-```
+   A successful run ends with all tests passing.
 
-The response reveals the HTTP Basic password once. `subject_ref` names the automation for routing and attribution; installation identity is the installation-local credential store, not this value. You can also issue, list, rotate, and revoke credentials by stable credential ID from another Laravel app with `ArtisanBuild\CrateClient\CrateIssuer`.
+### Deploy To Laravel Cloud
 
-In the customer app, install `artisan-build/crate-client`, configure Composer to use the Crate registry, set the credential, and write Composer auth:
+5. Create a Laravel Cloud application from your fork. Attach these resources to its environment:
 
-```bash
-export CRATE_URL="https://crate.example.com"
-export CRATE_TOKEN="the-issued-credential"
+   - a PostgreSQL database;
+   - private object storage for package metadata and archives;
+   - a managed queue for registry builds.
 
-composer config repositories.crate composer "$CRATE_URL"
+   Enable the scheduler so Crate can dispatch its daily rebuild.
 
-php artisan crate:auth
-composer require vendor/pkg
-```
+6. Set only the app-specific environment values:
 
-`crate:auth` writes or merges Composer `auth.json` HTTP Basic credentials for the Crate host. Composer then reads `/packages.json`, `/p2/...`, and `/dist/...` through Crate's credential gate.
+   ```text
+   APP_URL=https://crate.example.com
+   CRATE_URL=https://crate.example.com
+   ```
 
-## Authentication And Roles
+   **Never set environment variables for resources that Laravel Cloud provisions**, including the database, cache, queue, or bucket. Cloud injects their credentials and connection names. Values that you set yourself override those injected values and break the resource.
 
-Built for Cloud owns the canonical user and Laravel `web` session. Session identity carries the package's authority generation and closed `owner`, `admin`, or `member` role; unknown or stale contexts fail closed. Every active role can use Crate, manage its own personal Composer credentials, and manage installation credentials. Owner and Admin can add or remove repositories; every role can list repository/build state and replace or clear encrypted source credentials.
+7. Use this build command:
 
-Composer HTTP Basic accepts only active `basic` credentials mapped to the fixed app purpose `crate.composer.consume` (wire purpose `consumption`). It grants all-package registry reads and no repository, credential, transition, or shell authority. Personal credentials are account-bound; installation credentials survive their creator's departure. There is no fallback credential, generic ability token, or configurable package ACL.
+   ```bash
+   composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader && php artisan crate:install-satis
+   ```
+
+   Use `php artisan migrate --force` as the deploy command. The build installs Satis into `satis-tool/` inside the deploy artifact; the deploy command creates Crate's database tables.
+
+8. Deploy the environment. A successful build reports that Satis was installed at `satis-tool/bin/satis`, and the deploy finishes without migration errors.
+
+### First Use
+
+9. Create the first Owner from a local checkout that is connected to your Laravel Cloud application:
+
+   ```bash
+   php artisan create-admin --environment=<environment-name>
+   ```
+
+   This command intentionally operates on the named Cloud environment. If you want any Built for Cloud command to change your local database instead, pass `--local`. Never omit `--local` from a state-changing command when you intend a local change; commands that support Cloud delegation may otherwise operate on a selected Cloud environment.
+
+10. Run these commands in the deployed environment to register a package and build the registry:
+
+    ```bash
+    php artisan crate:repos:add acme/private-package https://github.com/acme/private-package.git
+    php artisan crate:build
+    ```
+
+    Replace the example name and URL with your package. A private source repository also needs `--source-token=<read-only-token>`. Crate encrypts that token in its database, but a token passed through Laravel Cloud's command runner remains visible in Cloud's command history. Use a narrowly scoped, revocable token and rotate it after setup.
+
+    `crate:repos:add` reports `Added repository [...]`. `crate:build` reports that it dispatched the Satis build. The managed queue performs the build and writes `packages.json`, provider metadata, and mirrored archives to object storage.
+
+11. Open `/bfc/login`, sign in as the Owner, and open `/bfc/ui/credentials/personal`. Create a Basic credential for `crate.composer.consume`. A credential purpose is the fixed job a credential may perform; this purpose permits Composer downloads and nothing else. Save the password when it appears because Crate shows it only once.
+
+12. In a Laravel application that will consume the private package, run:
+
+    ```bash
+    composer require artisan-build/crate-client:^1.0
+
+    export CRATE_URL="https://crate.example.com"
+    export CRATE_TOKEN="the-reveal-once-password"
+
+    composer config repositories.crate composer "$CRATE_URL"
+    php artisan crate:auth
+    composer require acme/private-package
+    ```
+
+    `crate:auth` writes Composer HTTP Basic credentials to `auth.json`. Do not commit that file. Composer should then install the package through Crate's protected `/packages.json`, `/p2/...`, and `/dist/...` routes.
 
 ## Configuration
 
-Crate-specific server config lives in `config/crate-server.php`:
+### Crate Server
 
-- `CRATE_URL`: the public registry URL used as Satis `homepage` and archive prefix. Must be set before the first `crate:build` — when unset, the generated `satis.json` fails Satis' schema validation and the whole build errors with `The json config file does not match the expected JSON schema`.
-- `CRATE_ARCHIVE_DISK`: disk for Composer metadata and mirrored dist archives. On Laravel Cloud the default (the environment's `FILESYSTEM_DISK`, wired to the `private` object-storage disk) works.
-- `CRATE_SATIS_PATH`: path to the isolated Satis executable (`<install-dir>/bin/satis`), run directly by the build job. Run `php artisan crate:install-satis` to install it; the default (`base_path('satis-tool/bin/satis')`) is where that command puts it, so a deploy that runs the command needs no value here. `satis-tool/` has its own dependency tree and is not part of the app's vendor tree, which is the isolation that matters. See `docs/deploy.md`.
-- `CRATE_OUTPUT_DIR`: storage prefix for generated registry output.
+| Environment variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `CRATE_URL` | Yes | none | Public registry URL written into Satis metadata and archive links. |
+| `CRATE_ARCHIVE_DISK` | No | `FILESYSTEM_DISK`, then `local` | Laravel filesystem disk for generated metadata and mirrored archives. |
+| `CRATE_SATIS_PATH` | No | `<app>/satis-tool/bin/satis` | Satis executable. The standard build command installs it here. |
+| `CRATE_OUTPUT_DIR` | No | `satis` | Directory prefix on the archive disk. |
+| `CRATE_DB_HOST` | No | app database | Host for an optional separate PostgreSQL connection. |
+| `CRATE_DB_PORT` | No | app database | Port for the optional separate connection. |
+| `CRATE_DB_DATABASE` | No | app database | Database name for the optional separate connection. |
+| `CRATE_DB_USERNAME` | No | app database | Username for the optional separate connection. |
+| `CRATE_DB_PASSWORD` | No | app database | Password for the optional separate connection. |
 
-Do not hand-set Laravel Cloud managed resource credentials for database, queue, cache, or object storage. Let Cloud inject them.
+Leave every `CRATE_DB_*` value unset to use the application's default database. On Laravel Cloud, also leave `CRATE_ARCHIVE_DISK` unset so Crate uses Cloud's injected `FILESYSTEM_DISK`.
 
-## Unified Credential API
+### Crate Client
 
-Built for Cloud always mounts the fixed operator routes:
+| Environment variable | Required | Purpose |
+| --- | --- | --- |
+| `CRATE_URL` | Yes | Base URL of the Crate registry. |
+| `CRATE_TOKEN` | Yes | Reveal-once Basic credential password used by `crate:auth`. |
 
-- `GET /bfc/credentials`: list credential summaries without secret material.
-- `POST /bfc/credentials`: issue a credential and reveal delivery material once.
-- `POST /bfc/credentials/{id}/rotate`: rotate by stable credential ID and reveal replacement delivery once.
-- `DELETE /bfc/credentials/{id}`: revoke by stable credential ID.
+The client package also includes an issuer SDK for applications that create, list, rotate, or revoke credentials through `/bfc/credentials`. See [`packages/crate-client/README.md`](packages/crate-client/README.md) for its configuration and PHP example.
 
-Operator credentials need the corresponding closed verb ability (`credential:read`, `credential:mint`, `credential:rotate`, or `credential:revoke`). A Composer credential has none of these. The package-owned personal and installation UI applies role and ownership policy without exposing operator credentials to a browser user.
+## Troubleshooting
 
-## Non-Goals
+- **Satis says its JSON does not match the schema:** set `CRATE_URL` before running `crate:build`.
+- **`satis-tool/bin/satis` is missing:** confirm the Laravel Cloud build command runs `php artisan crate:install-satis` after Composer installs the app dependencies.
+- **A build stays queued:** confirm a managed queue is attached and processing jobs. Do not set `QUEUE_CONNECTION` yourself.
+- **Composer receives `401 Unauthorized`:** use an active Basic credential for `crate.composer.consume`. A bearer credential, revoked credential, or credential for another purpose cannot read registry files.
+- **Satis cannot clone a source repository:** confirm `git` is available and the repository's read-only source token is still valid.
 
-- No hosted control plane.
-- No Crate-specific account or credential dashboard; those surfaces are package-owned.
-- No mirroring of packagist.org public packages.
-- No per-package or per-vendor access control in this release.
-- No search, download stats, organization hierarchy, or billing logic.
+## License
+
+Crate is open-source software licensed under the [MIT License](LICENSE).
