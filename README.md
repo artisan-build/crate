@@ -61,7 +61,7 @@ Crate is a private Composer registry that you run in your own Laravel Cloud acco
    composer test
    ```
 
-   A successful run ends with all tests passing.
+   The run ends with a `Tests: N passed` summary and no failures.
 
 6. Create a local Owner, then start the development server:
 
@@ -70,7 +70,7 @@ Crate is a private Composer registry that you run in your own Laravel Cloud acco
    composer dev
    ```
 
-   An Owner is the top-level administrator for this Crate deployment. The first command asks for an email, name, password, and password confirmation, then prints `Admin user <email> created.` Keep the server running and open the URL it prints, normally `http://localhost:8000/bfc/login`. After signing in, `/bfc/ui/credentials/personal` should show the personal credential form.
+   An Owner is the top-level administrator for this Crate deployment. The first command asks for an email, name, password, and password confirmation, then prints `Admin user <email> created.` The server prints `Server running on [http://localhost:8000]`. Leave it running in that terminal and open `http://localhost:8000/bfc/login` in a browser. After signing in, `/bfc/ui/credentials/personal` should show the personal credential form. Use a second terminal for the steps below.
 
 ### Deploy To Laravel Cloud
 
@@ -80,16 +80,19 @@ Crate is a private Composer registry that you run in your own Laravel Cloud acco
    - private object storage for package metadata and archives;
    - a managed queue for registry builds.
 
-   Enable the scheduler so Crate can dispatch its daily rebuild.
+   Enable the scheduler so Crate can dispatch its daily rebuild, and make sure the managed queue is processing jobs. `git` must be available in the build and queue runtimes so Satis can read VCS repositories.
+
+   Use the environment's default Cloud URL, or attach your own domain. You will use that exact URL for `APP_URL` and `CRATE_URL` below.
 
 8. Point your checkout at your own Cloud application, then find its environment ID:
 
    ```bash
+   cloud application:list --json --fields=id,name,organizationId -n
    cloud repo:config <application-id> --organization=<organization-id> -n
    cloud environment:list <application-id> --json --fields=id,name -n
    ```
 
-   This repository includes a `.cloud/config.json`; `cloud repo:config` replaces its defaults with your application and organization. Copy the `id` for the environment you are deploying.
+   The first command gives you the application and organization IDs required by `repo:config`. This repository includes a `.cloud/config.json`; `cloud repo:config` replaces its defaults with your application and organization. Copy the `id` for the environment you are deploying.
 
 9. Set only the app-specific environment values. You can use the Cloud dashboard's environment-variable settings or run:
 
@@ -98,23 +101,25 @@ Crate is a private Composer registry that you run in your own Laravel Cloud acco
    cloud environment:variables <environment-id> --action=set --key=CRATE_URL --value=https://crate.example.com --force -n --json
    ```
 
+   Replace `https://crate.example.com` with the Cloud URL or attached domain from step 7.
+
    **Never set environment variables for resources that Laravel Cloud provisions**, including the database, cache, queue, or bucket. Cloud injects their credentials and connection names. Values that you set yourself override those injected values and break the resource.
 
 10. Set this build command in the Cloud environment settings:
 
-   ```bash
-   composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader && php artisan crate:install-satis
-   ```
+    ```bash
+    composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader && php artisan crate:install-satis
+    ```
 
-   The build installs Satis into `satis-tool/` inside the deploy artifact.
+    The build installs Satis into `satis-tool/` inside the deploy artifact.
 
 11. Set the deploy command separately:
 
-   ```bash
-   php artisan migrate --force
-   ```
+    ```bash
+    php artisan migrate --force
+    ```
 
-   The deploy command creates Crate's database tables.
+    The deploy command creates Crate's database tables.
 
 12. Deploy the environment. A successful build reports that Satis was installed at `satis-tool/bin/satis`, and the deploy finishes without migration errors.
 
@@ -124,11 +129,11 @@ For more detail, including traditional or VM deployments, see [`docs/deploy.md`]
 
 13. Create the first Owner from the checkout you connected in step 8:
 
-   ```bash
-   php artisan create-admin --environment=<environment-id>
-   ```
+    ```bash
+    php artisan create-admin --environment=<environment-id>
+    ```
 
-   The command asks for an email, name, password, and password confirmation, then prints `Admin user <email> created.` It runs against the Cloud environment you name; pass `--local` instead to create the user in your local database. Crate's own `crate:*` commands have no such option and always run where you type them.
+    The command asks for an email, name, password, and password confirmation, then prints `Admin user <email> created.` It runs against the Cloud environment you name; pass `--local` instead to create the user in your local database. Crate's own `crate:*` commands have no such option and always run where you type them.
 
 14. Use the Cloud CLI to register a package and build the deployed registry:
 
@@ -154,7 +159,7 @@ For more detail, including traditional or VM deployments, see [`docs/deploy.md`]
     composer require acme/private-package
     ```
 
-    Replace `crate.example.com` in the `http-basic` key if your registry uses another host. Composer writes the password to `auth.json`; do not commit that file. It should then report that it installed `acme/private-package` through Crate's protected `/packages.json`, `/p2/...`, and `/dist/...` routes.
+    Replace `crate.example.com` in the `http-basic` key if your registry uses another host. Composer writes the password to `auth.json`; do not commit that file. Composer should print an `Installing acme/private-package` line. Its metadata and archive requests travel through Crate's protected `/packages.json`, `/p2/...`, and `/dist/...` routes.
 
 ## Configuration
 
@@ -174,15 +179,6 @@ For more detail, including traditional or VM deployments, see [`docs/deploy.md`]
 
 Leave every `CRATE_DB_*` value unset to use the application's default database. On Laravel Cloud, also leave `CRATE_ARCHIVE_DISK` unset so Crate uses Cloud's injected `FILESYSTEM_DISK`.
 
-### Crate Client
-
-| Environment variable | Required | Purpose |
-| --- | --- | --- |
-| `CRATE_URL` | Yes | Base URL of the Crate registry. |
-| `CRATE_TOKEN` | Yes | Reveal-once Basic credential password used by `crate:auth`. |
-
-The client package also includes an issuer SDK for applications that create, list, rotate, or revoke credentials through `/bfc/credentials`. See [`packages/crate-client/README.md`](packages/crate-client/README.md) for its configuration and PHP example.
-
 ## Troubleshooting
 
 - **Satis says its JSON does not match the schema:** set `CRATE_URL` before running `crate:build`.
@@ -193,4 +189,4 @@ The client package also includes an issuer SDK for applications that create, lis
 
 ## License
 
-Crate is open-source software licensed under the [MIT License](LICENSE).
+Crate is open-source software licensed under the MIT License.
