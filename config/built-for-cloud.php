@@ -9,7 +9,7 @@ return [
         'name' => 'Crate',
         'slug' => 'crate',
         'description' => 'Self-hosted, unmetered private Composer registry for Laravel.',
-        'icon' => 'https://raw.githubusercontent.com/artisan-build/crate/main/public/favicon.svg',
+        'icon' => 'https://scalpels.app/img/products/transparent/crate.png',
         'product_url' => 'https://scalpels.app/products/crate',
     ],
 
