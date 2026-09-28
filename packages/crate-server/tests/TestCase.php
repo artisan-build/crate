@@ -39,6 +39,13 @@ abstract class TestCase extends Orchestra
     protected function getEnvironmentSetUp($app): void
     {
         $app['config']->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
+        $app['config']->set('built-for-cloud.manifest', [
+            'name' => 'Crate',
+            'slug' => 'crate',
+            'description' => 'Self-hosted, unmetered private Composer registry for Laravel.',
+            'icon' => 'https://scalpels.app/img/products/transparent/crate.png',
+            'product_url' => 'https://scalpels.app/products/crate',
+        ]);
         $app['config']->set('auth.defaults.guard', 'web');
         $app['config']->set('auth.guards.web', ['driver' => 'session', 'provider' => 'users']);
         $app['config']->set('auth.guards.bfc', ['driver' => 'bfc', 'provider' => 'users']);
