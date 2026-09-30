@@ -29,6 +29,7 @@ final class Build extends Model
             'status' => BuildStatus::class,
             'started_at' => 'datetime',
             'finished_at' => 'datetime',
+            'lease_expires_at' => 'datetime',
         ];
     }
 

@@ -25,6 +25,21 @@ final class ServedRepo extends Model
      */
     protected $hidden = ['source_credential'];
 
+    protected static function booted(): void
+    {
+        self::saving(function (self $repo): void {
+            if (! $repo->isDirty('source_credential')) {
+                return;
+            }
+
+            $repo->has_source_credential = filled($repo->source_credential);
+
+            if (! $repo->has_source_credential) {
+                $repo->source_credential = null;
+            }
+        });
+    }
+
     /**
      * @return array<string, string>
      */
@@ -34,6 +49,7 @@ final class ServedRepo extends Model
             'status' => RepoStatus::class,
             'type' => RepoType::class,
             'source_credential' => 'encrypted',
+            'has_source_credential' => 'boolean',
             'last_built_at' => 'datetime',
         ];
     }

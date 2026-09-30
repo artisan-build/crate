@@ -16,9 +16,13 @@ use ArtisanBuild\BuiltForCloud\SubjectType;
 use ArtisanBuild\BuiltForCloud\Testing\McpDelegatedTools;
 use ArtisanBuild\BuiltForCloud\Testing\McpProductAdmission;
 use ArtisanBuild\CrateContracts\BuildStatus;
+use ArtisanBuild\CrateServer\Actions\QueueBuildDispatcher;
+use ArtisanBuild\CrateServer\Actions\RecoverBuildDispatches;
+use ArtisanBuild\CrateServer\Contracts\BuildDispatcher;
 use ArtisanBuild\CrateServer\Jobs\BuildSatis;
 use ArtisanBuild\CrateServer\Mcp\CrateReadMcpServer;
 use ArtisanBuild\CrateServer\Mcp\CrateWriteMcpServer;
+use ArtisanBuild\CrateServer\Mcp\OpaqueCursor;
 use ArtisanBuild\CrateServer\Mcp\Tools\BuildHistoryTool;
 use ArtisanBuild\CrateServer\Mcp\Tools\ServedRepositoriesTool;
 use ArtisanBuild\CrateServer\Mcp\Tools\TriggerBuildTool;
@@ -132,7 +136,27 @@ it('paginates more than one hundred repositories without skips or credential dis
         ->and(array_column($rows, 'id'))->toBe(range(1, 105))
         ->and(array_unique(array_column($rows, 'id')))->toHaveCount(105)
         ->and(json_encode([$first, $second]))->not->toContain($sentinel)
-        ->and($rows[52]['has_source_credential'])->toBeTrue();
+        ->and($rows[52]['has_source_credential'])->toBeTrue()
+        ->and($rows[0]['has_source_credential'])->toBeFalse()
+        ->and(crateToolJson(app(ServedRepositoriesTool::class)->handle(new Request))['repositories'])->toHaveCount(25);
+});
+
+it('removes every credential-bearing URL component from serialized repositories', function (): void {
+    $canaries = ['userinfo-canary', 'password-canary', 'query-canary', 'fragment-canary'];
+    ServedRepo::factory()->create([
+        'url' => 'https://userinfo-canary:password-canary@example.test:8443/org/repo.git?token=query-canary#fragment-canary',
+        'source_credential' => '',
+    ]);
+
+    $response = crateToolJson(app(ServedRepositoriesTool::class)->handle(new Request));
+    $serialized = json_encode($response, JSON_THROW_ON_ERROR);
+
+    expect($response['repositories'][0]['url'])->toBe('https://example.test:8443/org/repo.git')
+        ->and($response['repositories'][0]['has_source_credential'])->toBeFalse();
+
+    foreach ($canaries as $canary) {
+        expect($serialized)->not->toContain($canary);
+    }
 });
 
 it('paginates and filters more than one hundred builds with a stable descending cursor', function (): void {
@@ -198,7 +222,7 @@ it('closes wire schemas and rejects malformed runtime arguments', function (): v
         ['statuses' => ['status' => 'failed']],
         ['statuses' => ['unknown']],
         ['build_ids' => ['id' => 1]],
-        ['cursor' => base64_encode('{"v":1,"scope":"served_repositories","id":1}')],
+        ['cursor' => OpaqueCursor::encode('served_repositories', 1)],
     ];
     foreach ($invalidHistory as $arguments) {
         expect(fn () => app(BuildHistoryTool::class)->handle(new Request($arguments)))
@@ -264,7 +288,7 @@ it('atomically suppresses exact duplicate trigger requests and conflicts on chan
         ->and($conflict->isError())->toBeTrue()
         ->and(Build::query()->count())->toBe(1);
 
-    Bus::assertDispatchedTimes(BuildSatis::class, 1);
+    Bus::assertDispatchedTimes(BuildSatis::class, 2);
 
     expect(fn () => Build::query()->create([
         'served_repo_id' => $alpha->getKey(),
@@ -274,6 +298,56 @@ it('atomically suppresses exact duplicate trigger requests and conflicts on chan
         'idempotency_key' => 'build-key',
         'request_fingerprint' => str_repeat('a', 64),
     ]))->toThrow(UniqueConstraintViolationException::class);
+});
+
+it('replays before mutable repository validation and conflicts changed reuse after deletion', function (): void {
+    Bus::fake();
+    $repository = ServedRepo::factory()->create(['name' => 'vendor/rotated']);
+    $tool = app(TriggerBuildTool::class);
+    $principals = app(ActingPrincipalResolver::class);
+    $arguments = [
+        'idempotency_key' => 'deleted-repository-key',
+        'repository_name' => $repository->name,
+    ];
+
+    $first = crateToolJson($tool->handle(new Request($arguments), $principals));
+    $repository->delete();
+    $replay = crateToolJson($tool->handle(new Request($arguments), $principals));
+    $conflict = $tool->handle(new Request([
+        'idempotency_key' => 'deleted-repository-key',
+        'repository_name' => 'vendor/no-longer-present',
+    ]), $principals);
+
+    expect($replay['build_id'])->toBe($first['build_id'])
+        ->and($replay['duplicate'])->toBeTrue()
+        ->and($conflict->isError())->toBeTrue()
+        ->and((string) $conflict->content())->toBe('idempotency_key_conflict')
+        ->and(Build::query()->count())->toBe(1);
+    Bus::assertDispatchedTimes(BuildSatis::class, 2);
+});
+
+it('recovers a durable queued row when immediate dispatch fails after commit', function (): void {
+    app()->instance(BuildDispatcher::class, new class implements BuildDispatcher
+    {
+        public function dispatch(Build $build): void
+        {
+            throw new RuntimeException('injected queue outage');
+        }
+    });
+
+    $response = crateToolJson(app(TriggerBuildTool::class)->handle(
+        new Request(['idempotency_key' => 'dispatch-fault']),
+        app(ActingPrincipalResolver::class),
+    ));
+
+    expect($response['status'])->toBe(BuildStatus::Queued->value)
+        ->and(Build::query()->findOrFail($response['build_id'])->status)->toBe(BuildStatus::Queued);
+
+    Bus::fake();
+    app()->instance(BuildDispatcher::class, app(QueueBuildDispatcher::class));
+
+    expect(app(RecoverBuildDispatches::class)->handle())->toBe(0);
+    Bus::assertDispatched(BuildSatis::class, fn (BuildSatis $job): bool => $job->buildId === $response['build_id']);
 });
 
 it('preserves the class-qualified delegated actor on triggered builds', function (): void {

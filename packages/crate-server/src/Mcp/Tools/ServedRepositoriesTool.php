@@ -43,8 +43,7 @@ final class ServedRepositoriesTool extends CrateMcpTool
         $limit = (int) ($input['limit'] ?? 25);
         $afterId = OpaqueCursor::decode($input['cursor'] ?? null, self::CURSOR_SCOPE);
         $query = ServedRepo::query()
-            ->select(['id', 'name', 'url', 'type', 'status', 'last_built_at'])
-            ->selectRaw('source_credential IS NOT NULL AS has_source_credential')
+            ->select(['id', 'name', 'url', 'type', 'status', 'has_source_credential', 'last_built_at'])
             ->orderBy('id');
 
         if ($afterId !== null) {
@@ -59,7 +58,7 @@ final class ServedRepositoriesTool extends CrateMcpTool
             'repositories' => $repositories->map(static fn (ServedRepo $repo): array => [
                 'id' => $repo->getKey(),
                 'name' => $repo->name,
-                'url' => $repo->url,
+                'url' => self::safeUrl($repo->url),
                 'type' => $repo->type->value,
                 'status' => $repo->status->value,
                 'has_source_credential' => (bool) $repo->getAttribute('has_source_credential'),
@@ -77,5 +76,29 @@ final class ServedRepositoriesTool extends CrateMcpTool
             'cursor' => $schema->string()->description('Opaque cursor returned by the previous page.'),
             'limit' => $schema->integer()->min(1)->max(100)->default(25),
         ];
+    }
+
+    private static function safeUrl(string $url): ?string
+    {
+        $parts = parse_url($url);
+
+        if (! is_array($parts) || ! isset($parts['scheme'], $parts['host'])) {
+            return null;
+        }
+
+        $scheme = strtolower((string) $parts['scheme']);
+        $host = strtolower((string) $parts['host']);
+
+        if ($scheme === '' || $host === '') {
+            return null;
+        }
+
+        if (str_contains($host, ':') && ! str_starts_with($host, '[')) {
+            $host = '['.$host.']';
+        }
+
+        return $scheme.'://'.$host
+            .(isset($parts['port']) ? ':'.$parts['port'] : '')
+            .($parts['path'] ?? '');
     }
 }

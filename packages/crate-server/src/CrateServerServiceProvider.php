@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\CrateServer;
 
+use ArtisanBuild\CrateServer\Actions\QueueBuildDispatcher;
 use ArtisanBuild\CrateServer\Commands\CrateBuildCommand;
 use ArtisanBuild\CrateServer\Commands\CrateInstallSatisCommand;
+use ArtisanBuild\CrateServer\Commands\CrateRecoverBuildsCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposAddCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposListCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposRemoveCommand;
+use ArtisanBuild\CrateServer\Contracts\BuildDispatcher;
 use ArtisanBuild\CrateServer\Http\Middleware\EnsureValidCredential;
 use ArtisanBuild\CrateServer\Mcp\CrateReadMcpServer;
 use ArtisanBuild\CrateServer\Mcp\CrateWriteMcpServer;
@@ -25,6 +28,7 @@ final class CrateServerServiceProvider extends ServiceProvider
 
         $this->declareMcpSurface();
         $this->registerCrateConnection();
+        $this->app->bind(BuildDispatcher::class, QueueBuildDispatcher::class);
     }
 
     public function boot(): void
@@ -56,11 +60,13 @@ final class CrateServerServiceProvider extends ServiceProvider
                 CrateReposAddCommand::class,
                 CrateReposListCommand::class,
                 CrateReposRemoveCommand::class,
+                CrateRecoverBuildsCommand::class,
             ]);
         }
 
         $this->app->booted(function (): void {
             Schedule::command('crate:build --trigger=schedule')->daily();
+            Schedule::command('crate:recover-builds')->everyMinute()->withoutOverlapping();
         });
     }
 

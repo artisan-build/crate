@@ -73,13 +73,125 @@ it('claims and completes the durable queued build supplied by the MCP trigger', 
     ]);
     Process::fake([Process::result('satis built')]);
 
-    (new BuildSatis('vendor/package', 'mcp', (int) $build->getKey()))
+    (new BuildSatis(null, 'mcp', (int) $build->getKey(), (int) $repo->getKey()))
         ->handle(app(SatisConfigGenerator::class));
 
     expect(Build::query()->count())->toBe(1)
         ->and($build->refresh()->status)->toBe(BuildStatus::Succeeded)
         ->and($build->started_at)->not->toBeNull()
         ->and($build->finished_at)->not->toBeNull();
+});
+
+it('terminally fails a durable build when post-claim preflight throws', function (): void {
+    $build = Build::factory()->create([
+        'trigger' => 'mcp',
+        'status' => BuildStatus::Queued,
+        'requested_by' => 'installation',
+        'idempotency_key' => 'preflight-failure',
+        'request_fingerprint' => hash('sha256', 'request'),
+    ]);
+    File::partialMock()->shouldReceive('ensureDirectoryExists')->once()->andThrow(new RuntimeException('preflight failed'));
+
+    (new BuildSatis(buildId: (int) $build->getKey()))->handle(app(SatisConfigGenerator::class));
+
+    expect($build->refresh()->status)->toBe(BuildStatus::Failed)
+        ->and($build->finished_at)->not->toBeNull()
+        ->and($build->claim_token)->toBeNull()
+        ->and($build->lease_expires_at)->toBeNull()
+        ->and($build->output)->toContain('preflight failed');
+});
+
+it('reclaims an expired durable lease and completes the same handle', function (): void {
+    Storage::fake('crate-archive');
+    $repository = ServedRepo::factory()->create(['name' => 'vendor/reclaimed']);
+    $build = Build::factory()->create([
+        'served_repo_id' => $repository->getKey(),
+        'trigger' => 'mcp',
+        'status' => BuildStatus::Running,
+        'started_at' => now()->subHours(2),
+        'claim_token' => 'a5b505f7-8b09-466e-a7f0-076462624255',
+        'lease_expires_at' => now()->subMinute(),
+        'requested_by' => 'installation',
+        'idempotency_key' => 'expired-lease',
+        'request_fingerprint' => hash('sha256', 'request'),
+    ]);
+    Process::fake([Process::result('satis built')]);
+
+    (new BuildSatis(buildId: (int) $build->getKey(), servedRepoId: (int) $repository->getKey()))
+        ->handle(app(SatisConfigGenerator::class));
+
+    expect($build->refresh()->status)->toBe(BuildStatus::Succeeded)
+        ->and($build->claim_token)->toBeNull()
+        ->and($build->lease_expires_at)->toBeNull()
+        ->and(Build::query()->count())->toBe(1);
+});
+
+it('fails rather than executing against a replacement repository with the same name', function (): void {
+    Storage::fake('crate-archive');
+    $original = ServedRepo::factory()->create(['name' => 'vendor/replaced']);
+    $build = Build::factory()->create([
+        'served_repo_id' => $original->getKey(),
+        'trigger' => 'mcp',
+        'status' => BuildStatus::Queued,
+        'requested_by' => 'installation',
+        'idempotency_key' => 'target-race',
+        'request_fingerprint' => hash('sha256', 'request'),
+    ]);
+    $job = new BuildSatis(buildId: (int) $build->getKey(), servedRepoId: (int) $original->getKey());
+    $original->delete();
+    $replacement = ServedRepo::factory()->create(['name' => 'vendor/replaced']);
+    Process::fake();
+
+    $job->handle(app(SatisConfigGenerator::class));
+
+    expect($build->refresh()->status)->toBe(BuildStatus::Failed)
+        ->and($build->finished_at)->not->toBeNull()
+        ->and($replacement->refresh()->status)->toBe(RepoStatus::Pending);
+    Process::assertNothingRan();
+});
+
+it('ignores duplicate dispatches after one job claims and completes the durable row', function (): void {
+    Storage::fake('crate-archive');
+    $repository = ServedRepo::factory()->create(['name' => 'vendor/duplicate']);
+    $build = Build::factory()->create([
+        'served_repo_id' => $repository->getKey(),
+        'trigger' => 'mcp',
+        'status' => BuildStatus::Queued,
+        'requested_by' => 'installation',
+        'idempotency_key' => 'duplicate-dispatch',
+        'request_fingerprint' => hash('sha256', 'request'),
+    ]);
+    $first = new BuildSatis(buildId: (int) $build->getKey(), servedRepoId: (int) $repository->getKey());
+    $duplicate = new BuildSatis(buildId: (int) $build->getKey(), servedRepoId: (int) $repository->getKey());
+    Process::fake([Process::result('satis built')]);
+
+    $first->handle(app(SatisConfigGenerator::class));
+    $duplicate->handle(app(SatisConfigGenerator::class));
+
+    expect($build->refresh()->status)->toBe(BuildStatus::Succeeded);
+    Process::assertRanTimes(fn (): bool => true, 1);
+});
+
+it('refuses a duplicate dispatch while another worker holds the durable lease', function (): void {
+    $repository = ServedRepo::factory()->create(['name' => 'vendor/active-claim']);
+    $build = Build::factory()->create([
+        'served_repo_id' => $repository->getKey(),
+        'trigger' => 'mcp',
+        'status' => BuildStatus::Running,
+        'claim_token' => 'bcb45323-e4d4-45e7-9772-e48174360c5b',
+        'lease_expires_at' => now()->addHour(),
+        'requested_by' => 'installation',
+        'idempotency_key' => 'active-lease',
+        'request_fingerprint' => hash('sha256', 'request'),
+    ]);
+    Process::fake();
+
+    (new BuildSatis(buildId: (int) $build->getKey(), servedRepoId: (int) $repository->getKey()))
+        ->handle(app(SatisConfigGenerator::class));
+
+    expect($build->refresh()->status)->toBe(BuildStatus::Running)
+        ->and($build->claim_token)->toBe('bcb45323-e4d4-45e7-9772-e48174360c5b');
+    Process::assertNothingRan();
 });
 
 it('seeds incremental builds from the existing archive output before mirroring', function (): void {
@@ -244,6 +356,7 @@ it('queues every same-archive build and serializes processing without dispatch-t
 
     expect($packageJob)->not->toBeInstanceOf(ShouldBeUnique::class)
         ->and($packageJob->tries)->toBe(0)
+        ->and($packageJob->timeout)->toBe(3300)
         ->and($packageMiddleware)->toHaveCount(1)
         ->and($packageMiddleware[0])->toBeInstanceOf(WithoutOverlapping::class)
         ->and($packageMiddleware[0]->key)->toBe('crate-satis-archive')

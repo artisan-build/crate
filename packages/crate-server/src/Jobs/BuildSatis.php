@@ -14,22 +14,31 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Foundation\Queue\Queueable as FoundationQueueable;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use RuntimeException;
 use Throwable;
 
 final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
 {
     use FoundationQueueable;
 
+    private const int LEASE_SECONDS = 3600;
+
     /** Allow lock-contention releases to outlive a worker's --tries setting. */
     public int $tries = 0;
+
+    /** Keep the worker timeout below the durable claim lease. */
+    public int $timeout = 3300;
 
     public function __construct(
         public readonly ?string $package = null,
         public readonly string $trigger = 'manual',
         public readonly ?int $buildId = null,
+        public readonly ?int $servedRepoId = null,
     ) {}
 
     /** @return list<WithoutOverlapping> */
@@ -44,63 +53,131 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
 
     public function handle(SatisConfigGenerator $generator): void
     {
+        if ($this->buildId !== null) {
+            $this->handleDurableBuild($generator);
+
+            return;
+        }
+
         $servedRepo = $this->package === null
             ? null
             : ServedRepo::query()->where('name', $this->package)->first();
 
         if ($this->package !== null && $servedRepo === null) {
-            if ($this->buildId !== null) {
-                Build::query()->whereKey($this->buildId)->where('status', BuildStatus::Queued)->update([
-                    'status' => BuildStatus::Failed,
-                    'finished_at' => now(),
-                ]);
-            }
-
             return;
         }
 
-        if ($this->buildId === null) {
-            $build = Build::query()->create([
-                'served_repo_id' => $servedRepo?->getKey(),
-                'trigger' => $this->trigger,
-                'status' => BuildStatus::Running,
-                'started_at' => now(),
-            ]);
-        } else {
-            $claimed = Build::query()->whereKey($this->buildId)->where('status', BuildStatus::Queued)->update([
-                'status' => BuildStatus::Running,
-                'started_at' => now(),
-            ]);
+        $build = Build::query()->create([
+            'served_repo_id' => $servedRepo?->getKey(),
+            'trigger' => $this->trigger,
+            'status' => BuildStatus::Running,
+            'started_at' => now(),
+        ]);
 
-            if ($claimed !== 1) {
-                return;
-            }
+        $this->executeBuild($generator, $build, $servedRepo, $this->package);
+    }
 
-            $build = Build::query()->findOrFail($this->buildId);
+    private function handleDurableBuild(SatisConfigGenerator $generator): void
+    {
+        $claimToken = $this->claimDurableBuild();
+
+        if ($claimToken === null) {
+            return;
         }
 
-        $this->repositoryQuery($servedRepo)->update(['status' => RepoStatus::Building]);
+        try {
+            $build = Build::query()->findOrFail($this->buildId);
+            $servedRepo = $this->servedRepoId === null
+                ? null
+                : ServedRepo::query()->find($this->servedRepoId);
 
-        $workingDir = storage_path('framework/cache/crate-satis');
-        File::ensureDirectoryExists($workingDir);
+            if ($this->servedRepoId !== null && ! $servedRepo instanceof ServedRepo) {
+                throw new RuntimeException('The durable build target is no longer available.');
+            }
 
-        $tempDir = $workingDir.'/'.uniqid('build-', true);
-        File::makeDirectory($tempDir, 0755, true, true);
+            $this->executeBuild($generator, $build, $servedRepo, $servedRepo?->name, $claimToken);
+        } catch (Throwable $throwable) {
+            $this->finishBuild([
+                'status' => BuildStatus::Failed,
+                'output' => $this->redactedTail($throwable->getMessage(), []),
+                'finished_at' => now(),
+            ], $claimToken);
+        }
+    }
 
-        $authPath = $tempDir.'/auth.json';
+    private function claimDurableBuild(): ?string
+    {
+        return DB::connection('crate')->transaction(function (): ?string {
+            $build = Build::query()->lockForUpdate()->find($this->buildId);
+
+            if (! $build instanceof Build
+                || ! in_array($build->status, [BuildStatus::Queued, BuildStatus::Running], true)) {
+                return null;
+            }
+
+            if ($build->status === BuildStatus::Running && $build->lease_expires_at?->isFuture()) {
+                return null;
+            }
+
+            $targetMatches = ($build->served_repo_id === null && $this->servedRepoId === null)
+                || (int) $build->served_repo_id === $this->servedRepoId;
+
+            if ($build->trigger !== 'mcp' || ! $targetMatches) {
+                $build->update([
+                    'status' => BuildStatus::Failed,
+                    'output' => 'The queued job did not match the durable build target.',
+                    'finished_at' => now(),
+                    'claim_token' => null,
+                    'lease_expires_at' => null,
+                ]);
+
+                return null;
+            }
+
+            $claimToken = (string) Str::uuid();
+            $build->update([
+                'status' => BuildStatus::Running,
+                'started_at' => $build->started_at ?? now(),
+                'finished_at' => null,
+                'claim_token' => $claimToken,
+                'lease_expires_at' => now()->addSeconds(self::LEASE_SECONDS),
+            ]);
+
+            return $claimToken;
+        });
+    }
+
+    private function executeBuild(
+        SatisConfigGenerator $generator,
+        Build $build,
+        ?ServedRepo $servedRepo,
+        ?string $package,
+        ?string $claimToken = null,
+    ): void {
+        $tempDir = null;
+        $authPath = null;
         $sourceCredentials = [];
 
         try {
+            $this->repositoryQuery($servedRepo, $package)->update(['status' => RepoStatus::Building]);
+
+            $workingDir = storage_path('framework/cache/crate-satis');
+            File::ensureDirectoryExists($workingDir);
+
+            $tempDir = $workingDir.'/'.uniqid('build-', true);
+            File::makeDirectory($tempDir, 0755, true, true);
+
+            $authPath = $tempDir.'/auth.json';
             $configPath = $tempDir.'/satis.json';
             $outputDir = $tempDir.'/output';
 
-            File::put($configPath, json_encode($generator->generate($this->package), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            File::put($configPath, json_encode($generator->generate($package), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             $auth = $generator->authConfig();
             $sourceCredentials = $this->sourceCredentials($auth);
             File::put($authPath, json_encode($auth === [] ? (object) [] : $auth, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             File::ensureDirectoryExists($outputDir);
 
-            if ($this->package !== null) {
+            if ($package !== null) {
                 $this->seedOutputFromArchive($outputDir);
             }
 
@@ -118,42 +195,74 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
             if ($result->successful()) {
                 $this->mirrorOutput($outputDir);
 
-                $build->update([
+                $finished = $this->finishBuild([
                     'status' => BuildStatus::Succeeded,
                     'output' => $output,
                     'finished_at' => now(),
-                ]);
-                $this->repositoryQuery($servedRepo)->update([
-                    'status' => RepoStatus::Active,
-                    'last_built_at' => now(),
-                ]);
+                ], $claimToken, $build);
+
+                if ($finished) {
+                    $this->repositoryQuery($servedRepo, $package)->update([
+                        'status' => RepoStatus::Active,
+                        'last_built_at' => now(),
+                    ]);
+                }
 
                 return;
             }
 
-            $build->update([
+            $finished = $this->finishBuild([
                 'status' => BuildStatus::Failed,
                 'output' => $output,
                 'finished_at' => now(),
-            ]);
-            $this->repositoryQuery($servedRepo)->update(['status' => RepoStatus::Failed]);
+            ], $claimToken, $build);
+
+            if ($finished) {
+                $this->repositoryQuery($servedRepo, $package)->update(['status' => RepoStatus::Failed]);
+            }
         } catch (Throwable $throwable) {
-            $build->update([
+            $finished = $this->finishBuild([
                 'status' => BuildStatus::Failed,
                 'output' => $this->redactedTail($throwable->getMessage(), $sourceCredentials),
                 'finished_at' => now(),
-            ]);
-            $this->repositoryQuery($servedRepo)->update(['status' => RepoStatus::Failed]);
+            ], $claimToken, $build);
+
+            if ($finished) {
+                $this->repositoryQuery($servedRepo, $package)->update(['status' => RepoStatus::Failed]);
+            }
         } finally {
-            File::delete($authPath);
-            File::deleteDirectory($tempDir);
+            if ($authPath !== null) {
+                File::delete($authPath);
+            }
+
+            if ($tempDir !== null) {
+                File::deleteDirectory($tempDir);
+            }
         }
     }
 
-    /** @return Builder<ServedRepo> */
-    private function repositoryQuery(?ServedRepo $servedRepo): Builder
+    /** @param array<string, mixed> $attributes */
+    private function finishBuild(array $attributes, ?string $claimToken, ?Build $build = null): bool
     {
-        return $this->package === null
+        $attributes['claim_token'] = null;
+        $attributes['lease_expires_at'] = null;
+
+        if ($claimToken === null) {
+            $build?->update($attributes);
+
+            return true;
+        }
+
+        return Build::query()
+            ->whereKey($this->buildId)
+            ->where('claim_token', $claimToken)
+            ->update($attributes) === 1;
+    }
+
+    /** @return Builder<ServedRepo> */
+    private function repositoryQuery(?ServedRepo $servedRepo, ?string $package): Builder
+    {
+        return $package === null
             ? ServedRepo::query()
             : ServedRepo::query()->whereKey($servedRepo?->getKey());
     }
