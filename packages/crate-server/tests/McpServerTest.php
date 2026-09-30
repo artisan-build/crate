@@ -318,9 +318,20 @@ it('returns the same terminal target deleted result on retries after repository 
     ];
 
     $first = crateToolJson($tool->handle(new Request($arguments), $principals));
+    $firstRetryBuild = Build::query()->findOrFail($first['build_id']);
+    $concurrentRetryBuild = Build::query()->findOrFail($first['build_id']);
     $repository->delete();
-    $replay = crateToolJson($tool->handle(new Request($arguments), $principals));
-    $terminalReplay = crateToolJson($tool->handle(new Request($arguments), $principals));
+    $replayMethod = new ReflectionMethod($tool, 'replay');
+    $replayResponse = $replayMethod->invoke($tool, $firstRetryBuild, $firstRetryBuild->request_fingerprint);
+    $concurrentReplayResponse = $replayMethod->invoke(
+        $tool,
+        $concurrentRetryBuild,
+        $concurrentRetryBuild->request_fingerprint,
+    );
+    expect($replayResponse)->toBeInstanceOf(Response::class)
+        ->and($concurrentReplayResponse)->toBeInstanceOf(Response::class);
+    $replay = crateToolJson($replayResponse);
+    $terminalReplay = crateToolJson($concurrentReplayResponse);
     $conflict = $tool->handle(new Request([
         'idempotency_key' => 'deleted-repository-key',
         'repository_name' => 'vendor/no-longer-present',
@@ -347,6 +358,34 @@ it('returns the same terminal target deleted result on retries after repository 
             'name' => 'vendor/rotated',
         ])
         ->and($fullBuildSentinel->refresh()->status->value)->toBe('pending');
+    Bus::assertDispatchedTimes(BuildSatis::class, 1);
+});
+
+it('returns target deleted when an exact retry follows deletion of an actively claimed target', function (): void {
+    Bus::fake();
+    $repository = ServedRepo::factory()->create(['name' => 'vendor/claimed-before-delete']);
+    $tool = app(TriggerBuildTool::class);
+    $principals = app(ActingPrincipalResolver::class);
+    $arguments = [
+        'idempotency_key' => 'claimed-target-key',
+        'repository_name' => $repository->name,
+    ];
+    $first = crateToolJson($tool->handle(new Request($arguments), $principals));
+    $build = Build::query()->findOrFail($first['build_id']);
+    $build->update([
+        'status' => BuildStatus::Running,
+        'claim_token' => '19f654fc-b96f-46e8-847d-f2c12d6ca5ad',
+        'lease_expires_at' => now()->addHour(),
+    ]);
+    $repository->delete();
+
+    $replay = crateToolJson($tool->handle(new Request($arguments), $principals));
+
+    expect($replay['build_id'])->toBe($first['build_id'])
+        ->and($replay['status'])->toBe(BuildStatus::TargetDeleted->value)
+        ->and($replay['duplicate'])->toBeTrue()
+        ->and($build->refresh()->claim_token)->toBeNull()
+        ->and($build->lease_expires_at)->toBeNull();
     Bus::assertDispatchedTimes(BuildSatis::class, 1);
 });
 

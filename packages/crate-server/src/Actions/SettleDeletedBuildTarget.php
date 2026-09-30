@@ -5,22 +5,48 @@ declare(strict_types=1);
 namespace ArtisanBuild\CrateServer\Actions;
 
 use ArtisanBuild\CrateContracts\BuildStatus;
+use ArtisanBuild\CrateServer\Contracts\RepositoryBuildMutex;
 use ArtisanBuild\CrateServer\Models\Build;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
 
-final class SettleDeletedBuildTarget
+final readonly class SettleDeletedBuildTarget
 {
-    public function handle(Build $candidate): bool
-    {
-        return $candidate->getConnection()->transaction(function () use ($candidate): bool {
-            $build = Build::query()->lockForUpdate()->find($candidate->getKey());
+    public function __construct(private RepositoryBuildMutex $mutex) {}
 
-            if (! $build instanceof Build
-                || $build->trigger !== 'mcp'
+    public function handle(Build $candidate): Build
+    {
+        $build = $this->freshBuild($candidate);
+
+        if ($build->scope !== Build::SCOPE_REPOSITORY
+            || $build->target_repo_id === null
+            || ! in_array($build->status, [BuildStatus::Queued, BuildStatus::Running], true)
+            || $this->targetExists($build)) {
+            return $build;
+        }
+
+        return $this->mutex->synchronized(
+            (int) $build->target_repo_id,
+            fn (): Build => $this->settle($build),
+        );
+    }
+
+    private function freshBuild(Build $candidate): Build
+    {
+        return $candidate->getConnection()->transaction(
+            fn (): Build => Build::query()->lockForUpdate()->findOrFail($candidate->getKey()),
+        );
+    }
+
+    private function settle(Build $candidate): Build
+    {
+        return $candidate->getConnection()->transaction(function () use ($candidate): Build {
+            $build = Build::query()->lockForUpdate()->findOrFail($candidate->getKey());
+
+            if ($build->trigger !== 'mcp'
                 || $build->scope !== Build::SCOPE_REPOSITORY
-                || ! $this->isRecoverable($build)
+                || ! in_array($build->status, [BuildStatus::Queued, BuildStatus::Running], true)
                 || $this->targetExists($build)) {
-                return false;
+                return $build;
             }
 
             $build->update([
@@ -31,14 +57,8 @@ final class SettleDeletedBuildTarget
                 'lease_expires_at' => null,
             ]);
 
-            return true;
+            return $build;
         });
-    }
-
-    private function isRecoverable(Build $build): bool
-    {
-        return $build->status === BuildStatus::Queued
-            || ($build->status === BuildStatus::Running && $build->lease_expires_at?->isPast());
     }
 
     private function targetExists(Build $build): bool

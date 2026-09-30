@@ -93,9 +93,7 @@ final class TriggerBuildTool extends CrateMcpTool
             return Response::error('idempotency_key_conflict');
         }
 
-        if (app(SettleDeletedBuildTarget::class)->handle($build)) {
-            $build->refresh();
-        }
+        $build = app(SettleDeletedBuildTarget::class)->handle($build);
 
         if ($build->status === BuildStatus::Queued
             || ($build->status === BuildStatus::Running && $build->lease_expires_at?->isPast())) {

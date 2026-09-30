@@ -7,6 +7,7 @@ namespace ArtisanBuild\CrateServer\Jobs;
 use ArtisanBuild\BuiltForCloud\Contracts\SystemAuthorityQueueEntry;
 use ArtisanBuild\CrateContracts\BuildStatus;
 use ArtisanBuild\CrateContracts\RepoStatus;
+use ArtisanBuild\CrateServer\Contracts\RepositoryBuildMutex;
 use ArtisanBuild\CrateServer\Models\Build;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
 use ArtisanBuild\CrateServer\SatisConfigGenerator;
@@ -88,21 +89,37 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
 
         try {
             $build = Build::query()->findOrFail($this->buildId);
-            $servedRepo = $build->scope === Build::SCOPE_REPOSITORY
-                ? $this->targetRepository($build)
-                : null;
 
-            if ($build->scope === Build::SCOPE_REPOSITORY && ! $servedRepo instanceof ServedRepo) {
-                $this->finishBuild([
-                    'status' => BuildStatus::TargetDeleted,
-                    'output' => 'The requested repository target was deleted.',
-                    'finished_at' => now(),
-                ], $claimToken);
+            if ($build->scope === Build::SCOPE_REPOSITORY) {
+                app(RepositoryBuildMutex::class)->synchronized(
+                    (int) $build->target_repo_id,
+                    function () use ($generator, $build, $claimToken): void {
+                        $servedRepo = $this->targetRepository($build);
+
+                        if (! $servedRepo instanceof ServedRepo) {
+                            $this->finishBuild([
+                                'status' => BuildStatus::TargetDeleted,
+                                'output' => 'The requested repository target was deleted.',
+                                'finished_at' => now(),
+                            ], $claimToken);
+
+                            return;
+                        }
+
+                        $this->executeBuild(
+                            $generator,
+                            $build,
+                            $servedRepo,
+                            $build->target_repo_name,
+                            $claimToken,
+                        );
+                    },
+                );
 
                 return;
             }
 
-            $this->executeBuild($generator, $build, $servedRepo, $build->target_repo_name, $claimToken);
+            $this->executeBuild($generator, $build, null, null, $claimToken);
         } catch (Throwable $throwable) {
             $this->finishBuild([
                 'status' => BuildStatus::Failed,

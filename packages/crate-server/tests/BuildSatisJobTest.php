@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use ArtisanBuild\CrateContracts\BuildStatus;
 use ArtisanBuild\CrateContracts\RepoStatus;
+use ArtisanBuild\CrateServer\Actions\CacheRepositoryBuildMutex;
+use ArtisanBuild\CrateServer\Contracts\RepositoryBuildMutex;
 use ArtisanBuild\CrateServer\Jobs\BuildSatis;
 use ArtisanBuild\CrateServer\Models\Build;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
@@ -175,6 +177,54 @@ it('settles target deleted without a full build when the repository is deleted b
         ->and($fullBuildSentinelCount)->toBe(0)
         ->and($fullBuildSentinel->refresh()->status)->toBe(RepoStatus::Pending)
         ->and($replacement->refresh()->status)->toBe(RepoStatus::Pending);
+    Process::assertNothingRan();
+});
+
+it('settles target deleted when removal wins the target mutex after the durable claim', function (): void {
+    Storage::fake('crate-archive');
+    Storage::disk('crate-archive')->put('satis/packages.json', 'archive-before-race');
+    $repository = ServedRepo::factory()->create(['name' => 'vendor/deleted-after-claim']);
+    $fullBuildSentinel = ServedRepo::factory()->create(['name' => 'vendor/full-build-sentinel']);
+    $build = Build::factory()->create([
+        'served_repo_id' => $repository->getKey(),
+        'scope' => Build::SCOPE_REPOSITORY,
+        'target_repo_id' => $repository->getKey(),
+        'target_repo_name' => $repository->name,
+        'trigger' => 'mcp',
+        'status' => BuildStatus::Queued,
+        'requested_by' => 'installation',
+        'idempotency_key' => 'target-mutex-race',
+        'request_fingerprint' => hash('sha256', 'request'),
+    ]);
+    $mutex = new class($repository) implements RepositoryBuildMutex
+    {
+        public int $calls = 0;
+
+        public function __construct(private readonly ServedRepo $repository) {}
+
+        public function synchronized(int $repositoryId, Closure $callback): mixed
+        {
+            $this->calls++;
+            expect($repositoryId)->toBe($this->repository->getKey());
+            $this->repository->delete();
+
+            return $callback();
+        }
+    };
+    app()->instance(RepositoryBuildMutex::class, $mutex);
+    Process::fake();
+
+    (new BuildSatis(buildId: (int) $build->getKey()))
+        ->handle(app(SatisConfigGenerator::class));
+
+    expect($mutex->calls)->toBe(1)
+        ->and($build->refresh()->status)->toBe(BuildStatus::TargetDeleted)
+        ->and($build->served_repo_id)->toBeNull()
+        ->and($build->claim_token)->toBeNull()
+        ->and($build->lease_expires_at)->toBeNull()
+        ->and($fullBuildSentinel->refresh()->status)->toBe(RepoStatus::Pending)
+        ->and(Storage::disk('crate-archive')->allFiles('satis'))->toBe(['satis/packages.json'])
+        ->and(Storage::disk('crate-archive')->get('satis/packages.json'))->toBe('archive-before-race');
     Process::assertNothingRan();
 });
 
@@ -397,6 +447,7 @@ it('queues every same-archive build and serializes processing without dispatch-t
         ->and($packageMiddleware[0]->releaseAfter)->toBe(5)
         ->and($packageMiddleware[0]->expiresAfter)->toBe(3600)
         ->and($packageMiddleware[0]->expiresAfter)->toBeGreaterThanOrEqual($packageJob->timeout)
+        ->and(CacheRepositoryBuildMutex::LOCK_SECONDS)->toBeGreaterThanOrEqual($packageJob->timeout)
         ->and($fullMiddleware[0]->key)->toBe($packageMiddleware[0]->key);
 });
 

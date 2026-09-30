@@ -30,7 +30,11 @@ final readonly class RecoverBuildDispatches
             ->orderBy('id')
             ->eachById(function (Build $build) use (&$failures): void {
                 try {
-                    if (app(SettleDeletedBuildTarget::class)->handle($build)) {
+                    $build = app(SettleDeletedBuildTarget::class)->handle($build);
+
+                    if ($build->status === BuildStatus::TargetDeleted
+                        || ($build->status !== BuildStatus::Queued
+                            && ! ($build->status === BuildStatus::Running && $build->lease_expires_at?->isPast()))) {
                         return;
                     }
 
