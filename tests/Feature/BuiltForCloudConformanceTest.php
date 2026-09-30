@@ -34,6 +34,9 @@ use ArtisanBuild\CrateServer\Commands\CrateReposListCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposRemoveCommand;
 use ArtisanBuild\CrateServer\CrateCredentialDeclaration;
 use ArtisanBuild\CrateServer\Jobs\BuildSatis;
+use ArtisanBuild\CrateServer\Mcp\CrateReadMcpServer;
+use ArtisanBuild\CrateServer\Mcp\Tools\BuildHistoryTool;
+use ArtisanBuild\CrateServer\Mcp\Tools\ServedRepositoriesTool;
 use Composer\InstalledVersions;
 
 uses(ContractAssertions::class);
@@ -138,7 +141,10 @@ it('passes the unified auth consumer conformance spec', function (): void {
             'ArtisanBuild\BuiltForCloud\Mcp\TwoPhaseConfirmationStore|built-for-cloud.manifest.slug|1',
             'ArtisanBuild\BuiltForCloud\UiCredentialPurposes|built-for-cloud.ui.credential_purposes|1',
         ]),
-        'mcp_delegated' => [],
+        'mcp_delegated' => $sorted([
+            BuildHistoryTool::class,
+            ServedRepositoriesTool::class,
+        ]),
     ];
 
     $report = (new FleetConformance($this))->assert(new ConsumerConformance(
@@ -148,9 +154,9 @@ it('passes the unified auth consumer conformance spec', function (): void {
         sourceRoots: $sourceRoots,
         providerFiles: $providerFiles,
         runtimeAssertions: ['auth_schema', 'credential_listing', 'meta', 'transport_parity'],
-        capabilities: ['credentials', 'tokens'],
+        capabilities: ['credentials', 'mcp-delegated', 'mcp-effect-scoped', 'mcp-serve', 'tokens'],
         purposeMappings: [CrateCredentialDeclaration::COMPOSER_PURPOSE => CredentialPurpose::Consumption],
-        mcpServer: null,
+        mcpServer: CrateReadMcpServer::class,
         expected: $expected,
     ));
 

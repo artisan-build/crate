@@ -60,6 +60,28 @@ it('records an incremental build against the served repo', function (): void {
         ->and($build->served_repo_id)->toBe($repo->getKey());
 });
 
+it('claims and completes the durable queued build supplied by the MCP trigger', function (): void {
+    Storage::fake('crate-archive');
+    $repo = ServedRepo::factory()->create(['name' => 'vendor/package']);
+    $build = Build::factory()->create([
+        'served_repo_id' => $repo->getKey(),
+        'trigger' => 'mcp',
+        'status' => BuildStatus::Queued,
+        'requested_by' => 'bfc-console:42',
+        'idempotency_key' => 'durable-handle',
+        'request_fingerprint' => hash('sha256', 'request'),
+    ]);
+    Process::fake([Process::result('satis built')]);
+
+    (new BuildSatis('vendor/package', 'mcp', (int) $build->getKey()))
+        ->handle(app(SatisConfigGenerator::class));
+
+    expect(Build::query()->count())->toBe(1)
+        ->and($build->refresh()->status)->toBe(BuildStatus::Succeeded)
+        ->and($build->started_at)->not->toBeNull()
+        ->and($build->finished_at)->not->toBeNull();
+});
+
 it('seeds incremental builds from the existing archive output before mirroring', function (): void {
     Storage::fake('crate-archive');
     Storage::disk('crate-archive')->put('satis/packages.json', json_encode([

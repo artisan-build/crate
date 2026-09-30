@@ -10,6 +10,7 @@ use ArtisanBuild\CrateServer\CrateCredentialDeclaration;
 use ArtisanBuild\CrateServer\CrateServerServiceProvider;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Mcp\Server\McpServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
@@ -29,6 +30,7 @@ abstract class TestCase extends Orchestra
     {
         return [
             BuiltForCloudServiceProvider::class,
+            McpServiceProvider::class,
             CrateServerServiceProvider::class,
         ];
     }

@@ -29,6 +29,7 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
     public function __construct(
         public readonly ?string $package = null,
         public readonly string $trigger = 'manual',
+        public readonly ?int $buildId = null,
     ) {}
 
     /** @return list<WithoutOverlapping> */
@@ -48,15 +49,35 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
             : ServedRepo::query()->where('name', $this->package)->first();
 
         if ($this->package !== null && $servedRepo === null) {
+            if ($this->buildId !== null) {
+                Build::query()->whereKey($this->buildId)->where('status', BuildStatus::Queued)->update([
+                    'status' => BuildStatus::Failed,
+                    'finished_at' => now(),
+                ]);
+            }
+
             return;
         }
 
-        $build = Build::query()->create([
-            'served_repo_id' => $servedRepo?->getKey(),
-            'trigger' => $this->trigger,
-            'status' => BuildStatus::Running,
-            'started_at' => now(),
-        ]);
+        if ($this->buildId === null) {
+            $build = Build::query()->create([
+                'served_repo_id' => $servedRepo?->getKey(),
+                'trigger' => $this->trigger,
+                'status' => BuildStatus::Running,
+                'started_at' => now(),
+            ]);
+        } else {
+            $claimed = Build::query()->whereKey($this->buildId)->where('status', BuildStatus::Queued)->update([
+                'status' => BuildStatus::Running,
+                'started_at' => now(),
+            ]);
+
+            if ($claimed !== 1) {
+                return;
+            }
+
+            $build = Build::query()->findOrFail($this->buildId);
+        }
 
         $this->repositoryQuery($servedRepo)->update(['status' => RepoStatus::Building]);
 

@@ -10,9 +10,12 @@ use ArtisanBuild\CrateServer\Commands\CrateReposAddCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposListCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposRemoveCommand;
 use ArtisanBuild\CrateServer\Http\Middleware\EnsureValidCredential;
+use ArtisanBuild\CrateServer\Mcp\CrateReadMcpServer;
+use ArtisanBuild\CrateServer\Mcp\CrateWriteMcpServer;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Mcp\Facades\Mcp;
 
 final class CrateServerServiceProvider extends ServiceProvider
 {
@@ -20,6 +23,7 @@ final class CrateServerServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/crate-server.php', CrateServer::CONFIG_KEY);
 
+        $this->declareMcpSurface();
         $this->registerCrateConnection();
     }
 
@@ -38,6 +42,13 @@ final class CrateServerServiceProvider extends ServiceProvider
         Route::middleware(['crate-server.credential'])->group(__DIR__.'/../routes/crate-server.php');
         Route::middleware(['web', 'bfc.auth'])->group(__DIR__.'/../routes/crate-server-management.php');
 
+        $this->app->booted(function (): void {
+            Mcp::web((string) config('crate-server.mcp.read_path', '/mcp'), CrateReadMcpServer::class)
+                ->middleware('bfc.mcp:product,read');
+            Mcp::web((string) config('crate-server.mcp.write_path', '/mcp/write'), CrateWriteMcpServer::class)
+                ->middleware('bfc.mcp:product,write');
+        });
+
         if ($this->app->runningInConsole()) {
             $this->commands([
                 CrateBuildCommand::class,
@@ -51,6 +62,16 @@ final class CrateServerServiceProvider extends ServiceProvider
         $this->app->booted(function (): void {
             Schedule::command('crate:build --trigger=schedule')->daily();
         });
+    }
+
+    private function declareMcpSurface(): void
+    {
+        config([
+            'built-for-cloud.mcp.path' => config('crate-server.mcp.read_path', '/mcp'),
+            'built-for-cloud.mcp.write_path' => config('crate-server.mcp.write_path', '/mcp/write'),
+            'built-for-cloud.mcp.destructive_path' => null,
+            'built-for-cloud.mcp.delegated' => true,
+        ]);
     }
 
     private function registerCrateConnection(): void
