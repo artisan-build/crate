@@ -29,6 +29,7 @@ use ArtisanBuild\BuiltForCloud\Testing\FleetConformance;
 use ArtisanBuild\CrateClient\Commands\CrateAuthCommand;
 use ArtisanBuild\CrateServer\Commands\CrateBuildCommand;
 use ArtisanBuild\CrateServer\Commands\CrateInstallSatisCommand;
+use ArtisanBuild\CrateServer\Commands\CrateRecoverBuildsCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposAddCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposListCommand;
 use ArtisanBuild\CrateServer\Commands\CrateReposRemoveCommand;
@@ -122,6 +123,7 @@ it('passes the unified auth consumer conformance spec', function (): void {
             CrateAuthCommand::class,
             CrateBuildCommand::class,
             CrateInstallSatisCommand::class,
+            CrateRecoverBuildsCommand::class,
             CrateReposAddCommand::class,
             CrateReposListCommand::class,
             CrateReposRemoveCommand::class,
