@@ -16,6 +16,10 @@ final class Build extends Model
     /** @use HasFactory<BuildFactory> */
     use HasFactory;
 
+    public const string SCOPE_FULL = 'full';
+
+    public const string SCOPE_REPOSITORY = 'repository';
+
     protected $connection = 'crate';
 
     protected $guarded = [];

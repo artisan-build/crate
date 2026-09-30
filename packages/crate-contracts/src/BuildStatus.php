@@ -10,4 +10,5 @@ enum BuildStatus: string
     case Running = 'running';
     case Succeeded = 'succeeded';
     case Failed = 'failed';
+    case TargetDeleted = 'target_deleted';
 }

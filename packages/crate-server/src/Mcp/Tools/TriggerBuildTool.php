@@ -14,6 +14,7 @@ use ArtisanBuild\BuiltForCloud\Mcp\ToolClassification;
 use ArtisanBuild\BuiltForCloud\Mcp\ToolEffect;
 use ArtisanBuild\CrateContracts\BuildStatus;
 use ArtisanBuild\CrateServer\Actions\CreateOrReplayMcpBuild;
+use ArtisanBuild\CrateServer\Actions\SettleDeletedBuildTarget;
 use ArtisanBuild\CrateServer\Contracts\BuildDispatcher;
 use ArtisanBuild\CrateServer\Mcp\CrateMcpTool;
 use ArtisanBuild\CrateServer\Models\Build;
@@ -73,7 +74,7 @@ final class TriggerBuildTool extends CrateMcpTool
             $requestedBy,
             $input['idempotency_key'],
             $fingerprint,
-            $repository === null ? null : (int) $repository->getKey(),
+            $repository,
         );
         $build = $result['build'];
 
@@ -90,6 +91,10 @@ final class TriggerBuildTool extends CrateMcpTool
     {
         if (! hash_equals((string) $build->request_fingerprint, $fingerprint)) {
             return Response::error('idempotency_key_conflict');
+        }
+
+        if (app(SettleDeletedBuildTarget::class)->handle($build)) {
+            $build->refresh();
         }
 
         if ($build->status === BuildStatus::Queued

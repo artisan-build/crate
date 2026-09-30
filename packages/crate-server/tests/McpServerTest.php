@@ -166,6 +166,9 @@ it('paginates and filters more than one hundred builds with a stable descending 
     Build::factory()->count(105)->sequence(
         fn ($sequence): array => [
             'served_repo_id' => $sequence->index % 2 === 0 ? $alpha->getKey() : $beta->getKey(),
+            'scope' => Build::SCOPE_REPOSITORY,
+            'target_repo_id' => $sequence->index % 2 === 0 ? $alpha->getKey() : $beta->getKey(),
+            'target_repo_name' => $sequence->index % 2 === 0 ? $alpha->name : $beta->name,
             'status' => $sequence->index % 3 === 0 ? BuildStatus::Failed : BuildStatus::Succeeded,
         ],
     )->create();
@@ -286,6 +289,9 @@ it('atomically suppresses exact duplicate trigger requests and conflicts on chan
         ])
         ->and((string) $conflict->content())->toBe('idempotency_key_conflict')
         ->and($conflict->isError())->toBeTrue()
+        ->and(Build::query()->firstOrFail()->scope)->toBe(Build::SCOPE_REPOSITORY)
+        ->and(Build::query()->firstOrFail()->target_repo_id)->toBe($alpha->getKey())
+        ->and(Build::query()->firstOrFail()->target_repo_name)->toBe($alpha->name)
         ->and(Build::query()->count())->toBe(1);
 
     Bus::assertDispatchedTimes(BuildSatis::class, 2);
@@ -300,9 +306,10 @@ it('atomically suppresses exact duplicate trigger requests and conflicts on chan
     ]))->toThrow(UniqueConstraintViolationException::class);
 });
 
-it('replays before mutable repository validation and conflicts changed reuse after deletion', function (): void {
+it('returns the same terminal target deleted result on retries after repository deletion', function (): void {
     Bus::fake();
     $repository = ServedRepo::factory()->create(['name' => 'vendor/rotated']);
+    $fullBuildSentinel = ServedRepo::factory()->create(['name' => 'vendor/full-build-sentinel']);
     $tool = app(TriggerBuildTool::class);
     $principals = app(ActingPrincipalResolver::class);
     $arguments = [
@@ -313,17 +320,34 @@ it('replays before mutable repository validation and conflicts changed reuse aft
     $first = crateToolJson($tool->handle(new Request($arguments), $principals));
     $repository->delete();
     $replay = crateToolJson($tool->handle(new Request($arguments), $principals));
+    $terminalReplay = crateToolJson($tool->handle(new Request($arguments), $principals));
     $conflict = $tool->handle(new Request([
         'idempotency_key' => 'deleted-repository-key',
         'repository_name' => 'vendor/no-longer-present',
     ]), $principals);
 
-    expect($replay['build_id'])->toBe($first['build_id'])
+    $build = Build::query()->findOrFail($first['build_id']);
+    $history = crateToolJson(app(BuildHistoryTool::class)->handle(new Request([
+        'build_ids' => [$build->getKey()],
+    ])));
+
+    expect($replay)->toBe($terminalReplay)
+        ->and($replay['build_id'])->toBe($first['build_id'])
         ->and($replay['duplicate'])->toBeTrue()
+        ->and($replay['status'])->toBe(BuildStatus::TargetDeleted->value)
         ->and($conflict->isError())->toBeTrue()
         ->and((string) $conflict->content())->toBe('idempotency_key_conflict')
-        ->and(Build::query()->count())->toBe(1);
-    Bus::assertDispatchedTimes(BuildSatis::class, 2);
+        ->and(Build::query()->count())->toBe(1)
+        ->and($build->served_repo_id)->toBeNull()
+        ->and($build->scope)->toBe(Build::SCOPE_REPOSITORY)
+        ->and($build->target_repo_id)->toBe($repository->getKey())
+        ->and($build->target_repo_name)->toBe('vendor/rotated')
+        ->and($history['builds'][0]['repository'])->toBe([
+            'id' => $repository->getKey(),
+            'name' => 'vendor/rotated',
+        ])
+        ->and($fullBuildSentinel->refresh()->status->value)->toBe('pending');
+    Bus::assertDispatchedTimes(BuildSatis::class, 1);
 });
 
 it('recovers a durable queued row when immediate dispatch fails after commit', function (): void {
@@ -340,8 +364,13 @@ it('recovers a durable queued row when immediate dispatch fails after commit', f
         app(ActingPrincipalResolver::class),
     ));
 
+    $build = Build::query()->findOrFail($response['build_id']);
+
     expect($response['status'])->toBe(BuildStatus::Queued->value)
-        ->and(Build::query()->findOrFail($response['build_id'])->status)->toBe(BuildStatus::Queued);
+        ->and($build->status)->toBe(BuildStatus::Queued)
+        ->and($build->scope)->toBe(Build::SCOPE_FULL)
+        ->and($build->target_repo_id)->toBeNull()
+        ->and($build->target_repo_name)->toBeNull();
 
     Bus::fake();
     app()->instance(BuildDispatcher::class, app(QueueBuildDispatcher::class));

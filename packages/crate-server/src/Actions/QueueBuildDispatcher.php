@@ -16,7 +16,6 @@ final class QueueBuildDispatcher implements BuildDispatcher
         Bus::dispatch(new BuildSatis(
             trigger: 'mcp',
             buildId: (int) $build->getKey(),
-            servedRepoId: $build->served_repo_id === null ? null : (int) $build->served_repo_id,
         ));
     }
 }

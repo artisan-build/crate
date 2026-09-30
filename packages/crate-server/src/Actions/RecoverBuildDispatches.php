@@ -30,6 +30,10 @@ final readonly class RecoverBuildDispatches
             ->orderBy('id')
             ->eachById(function (Build $build) use (&$failures): void {
                 try {
+                    if (app(SettleDeletedBuildTarget::class)->handle($build)) {
+                        return;
+                    }
+
                     $this->dispatcher->dispatch($build);
                 } catch (Throwable $throwable) {
                     report($throwable);

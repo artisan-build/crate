@@ -16,7 +16,6 @@ use ArtisanBuild\CrateServer\Mcp\CrateMcpTool;
 use ArtisanBuild\CrateServer\Mcp\OpaqueCursor;
 use ArtisanBuild\CrateServer\Models\Build;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\Rule;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
@@ -46,12 +45,12 @@ final class BuildHistoryTool extends CrateMcpTool
             'build_ids.*' => ['integer', 'min:1'],
             'repository_names' => ['sometimes', 'list', 'max:100'],
             'repository_names.*' => ['string', 'max:255'],
-            'statuses' => ['sometimes', 'list', 'max:4'],
+            'statuses' => ['sometimes', 'list', 'max:5'],
             'statuses.*' => ['string', Rule::enum(BuildStatus::class)],
         ]);
         $limit = (int) ($input['limit'] ?? 25);
         $beforeId = OpaqueCursor::decode($input['cursor'] ?? null, self::CURSOR_SCOPE);
-        $query = Build::query()->with('servedRepo:id,name')->orderByDesc('id');
+        $query = Build::query()->orderByDesc('id');
 
         if ($beforeId !== null) {
             $query->where('id', '<', $beforeId);
@@ -62,8 +61,7 @@ final class BuildHistoryTool extends CrateMcpTool
         }
 
         if (($input['repository_names'] ?? []) !== []) {
-            $names = $input['repository_names'];
-            $query->whereHas('servedRepo', static fn (Builder $repo): Builder => $repo->whereIn('name', $names));
+            $query->whereIn('target_repo_name', $input['repository_names']);
         }
 
         if (($input['statuses'] ?? []) !== []) {
@@ -77,9 +75,9 @@ final class BuildHistoryTool extends CrateMcpTool
         return Response::json([
             'builds' => $builds->map(static fn (Build $build): array => [
                 'id' => $build->getKey(),
-                'repository' => $build->servedRepo === null ? null : [
-                    'id' => $build->servedRepo->getKey(),
-                    'name' => $build->servedRepo->name,
+                'repository' => $build->scope === Build::SCOPE_FULL ? null : [
+                    'id' => $build->target_repo_id,
+                    'name' => $build->target_repo_name,
                 ],
                 'trigger' => $build->trigger,
                 'status' => $build->status->value,
@@ -99,7 +97,7 @@ final class BuildHistoryTool extends CrateMcpTool
             'limit' => $schema->integer()->min(1)->max(100)->default(25),
             'build_ids' => $schema->array()->items($schema->integer()->min(1))->max(100),
             'repository_names' => $schema->array()->items($schema->string())->max(100),
-            'statuses' => $schema->array()->items($schema->string()->enum(BuildStatus::class))->max(4),
+            'statuses' => $schema->array()->items($schema->string()->enum(BuildStatus::class))->max(5),
         ];
     }
 }

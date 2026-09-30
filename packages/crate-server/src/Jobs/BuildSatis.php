@@ -19,7 +19,6 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use RuntimeException;
 use Throwable;
 
 final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
@@ -38,7 +37,6 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
         public readonly ?string $package = null,
         public readonly string $trigger = 'manual',
         public readonly ?int $buildId = null,
-        public readonly ?int $servedRepoId = null,
     ) {}
 
     /** @return list<WithoutOverlapping> */
@@ -47,7 +45,7 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
         return [
             (new WithoutOverlapping('crate-satis-archive'))
                 ->releaseAfter(5)
-                ->expireAfter(600),
+                ->expireAfter(self::LEASE_SECONDS),
         ];
     }
 
@@ -69,6 +67,9 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
 
         $build = Build::query()->create([
             'served_repo_id' => $servedRepo?->getKey(),
+            'scope' => $servedRepo === null ? Build::SCOPE_FULL : Build::SCOPE_REPOSITORY,
+            'target_repo_id' => $servedRepo?->getKey(),
+            'target_repo_name' => $servedRepo?->name,
             'trigger' => $this->trigger,
             'status' => BuildStatus::Running,
             'started_at' => now(),
@@ -87,15 +88,21 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
 
         try {
             $build = Build::query()->findOrFail($this->buildId);
-            $servedRepo = $this->servedRepoId === null
-                ? null
-                : ServedRepo::query()->find($this->servedRepoId);
+            $servedRepo = $build->scope === Build::SCOPE_REPOSITORY
+                ? $this->targetRepository($build)
+                : null;
 
-            if ($this->servedRepoId !== null && ! $servedRepo instanceof ServedRepo) {
-                throw new RuntimeException('The durable build target is no longer available.');
+            if ($build->scope === Build::SCOPE_REPOSITORY && ! $servedRepo instanceof ServedRepo) {
+                $this->finishBuild([
+                    'status' => BuildStatus::TargetDeleted,
+                    'output' => 'The requested repository target was deleted.',
+                    'finished_at' => now(),
+                ], $claimToken);
+
+                return;
             }
 
-            $this->executeBuild($generator, $build, $servedRepo, $servedRepo?->name, $claimToken);
+            $this->executeBuild($generator, $build, $servedRepo, $build->target_repo_name, $claimToken);
         } catch (Throwable $throwable) {
             $this->finishBuild([
                 'status' => BuildStatus::Failed,
@@ -119,13 +126,22 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
                 return null;
             }
 
-            $targetMatches = ($build->served_repo_id === null && $this->servedRepoId === null)
-                || (int) $build->served_repo_id === $this->servedRepoId;
-
-            if ($build->trigger !== 'mcp' || ! $targetMatches) {
+            if ($build->trigger !== 'mcp' || ! $this->hasValidIntent($build)) {
                 $build->update([
                     'status' => BuildStatus::Failed,
-                    'output' => 'The queued job did not match the durable build target.',
+                    'output' => 'The durable build intent is invalid.',
+                    'finished_at' => now(),
+                    'claim_token' => null,
+                    'lease_expires_at' => null,
+                ]);
+
+                return null;
+            }
+
+            if ($build->scope === Build::SCOPE_REPOSITORY && ! $this->targetRepository($build) instanceof ServedRepo) {
+                $build->update([
+                    'status' => BuildStatus::TargetDeleted,
+                    'output' => 'The requested repository target was deleted.',
                     'finished_at' => now(),
                     'claim_token' => null,
                     'lease_expires_at' => null,
@@ -145,6 +161,26 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
 
             return $claimToken;
         });
+    }
+
+    private function hasValidIntent(Build $build): bool
+    {
+        if ($build->scope === Build::SCOPE_FULL) {
+            return $build->target_repo_id === null && $build->target_repo_name === null;
+        }
+
+        return $build->scope === Build::SCOPE_REPOSITORY
+            && $build->target_repo_id !== null
+            && is_string($build->target_repo_name)
+            && $build->target_repo_name !== '';
+    }
+
+    private function targetRepository(Build $build): ?ServedRepo
+    {
+        return ServedRepo::query()
+            ->whereKey($build->target_repo_id)
+            ->where('name', $build->target_repo_name)
+            ->first();
     }
 
     private function executeBuild(

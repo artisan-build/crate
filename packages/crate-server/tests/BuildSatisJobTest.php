@@ -34,6 +34,9 @@ it('records a succeeded full build and mirrors satis output', function (): void 
 
     expect($build->status)->toBe(BuildStatus::Succeeded)
         ->and($build->served_repo_id)->toBeNull()
+        ->and($build->scope)->toBe(Build::SCOPE_FULL)
+        ->and($build->target_repo_id)->toBeNull()
+        ->and($build->target_repo_name)->toBeNull()
         ->and($build->started_at)->not->toBeNull()
         ->and($build->finished_at)->not->toBeNull()
         ->and($build->output)->toContain('satis built')
@@ -65,6 +68,9 @@ it('claims and completes the durable queued build supplied by the MCP trigger', 
     $repo = ServedRepo::factory()->create(['name' => 'vendor/package']);
     $build = Build::factory()->create([
         'served_repo_id' => $repo->getKey(),
+        'scope' => Build::SCOPE_REPOSITORY,
+        'target_repo_id' => $repo->getKey(),
+        'target_repo_name' => $repo->name,
         'trigger' => 'mcp',
         'status' => BuildStatus::Queued,
         'requested_by' => 'bfc-console:42',
@@ -73,7 +79,7 @@ it('claims and completes the durable queued build supplied by the MCP trigger', 
     ]);
     Process::fake([Process::result('satis built')]);
 
-    (new BuildSatis(null, 'mcp', (int) $build->getKey(), (int) $repo->getKey()))
+    (new BuildSatis(null, 'mcp', (int) $build->getKey()))
         ->handle(app(SatisConfigGenerator::class));
 
     expect(Build::query()->count())->toBe(1)
@@ -106,6 +112,9 @@ it('reclaims an expired durable lease and completes the same handle', function (
     $repository = ServedRepo::factory()->create(['name' => 'vendor/reclaimed']);
     $build = Build::factory()->create([
         'served_repo_id' => $repository->getKey(),
+        'scope' => Build::SCOPE_REPOSITORY,
+        'target_repo_id' => $repository->getKey(),
+        'target_repo_name' => $repository->name,
         'trigger' => 'mcp',
         'status' => BuildStatus::Running,
         'started_at' => now()->subHours(2),
@@ -117,7 +126,7 @@ it('reclaims an expired durable lease and completes the same handle', function (
     ]);
     Process::fake([Process::result('satis built')]);
 
-    (new BuildSatis(buildId: (int) $build->getKey(), servedRepoId: (int) $repository->getKey()))
+    (new BuildSatis(buildId: (int) $build->getKey()))
         ->handle(app(SatisConfigGenerator::class));
 
     expect($build->refresh()->status)->toBe(BuildStatus::Succeeded)
@@ -126,26 +135,45 @@ it('reclaims an expired durable lease and completes the same handle', function (
         ->and(Build::query()->count())->toBe(1);
 });
 
-it('fails rather than executing against a replacement repository with the same name', function (): void {
+it('settles target deleted without a full build when the repository is deleted before execution', function (): void {
     Storage::fake('crate-archive');
     $original = ServedRepo::factory()->create(['name' => 'vendor/replaced']);
+    $fullBuildSentinel = ServedRepo::factory()->create(['name' => 'vendor/full-build-sentinel']);
     $build = Build::factory()->create([
         'served_repo_id' => $original->getKey(),
+        'scope' => Build::SCOPE_REPOSITORY,
+        'target_repo_id' => $original->getKey(),
+        'target_repo_name' => $original->name,
         'trigger' => 'mcp',
         'status' => BuildStatus::Queued,
         'requested_by' => 'installation',
         'idempotency_key' => 'target-race',
         'request_fingerprint' => hash('sha256', 'request'),
     ]);
-    $job = new BuildSatis(buildId: (int) $build->getKey(), servedRepoId: (int) $original->getKey());
+    $job = new BuildSatis(buildId: (int) $build->getKey());
+    $fullBuildSentinelCount = 0;
     $original->delete();
     $replacement = ServedRepo::factory()->create(['name' => 'vendor/replaced']);
-    Process::fake();
+    Process::fake(function (PendingProcess $process) use ($fullBuildSentinel, &$fullBuildSentinelCount) {
+        $config = json_decode(File::get($process->path.'/satis.json'), true, flags: JSON_THROW_ON_ERROR);
+
+        if (array_key_exists($fullBuildSentinel->name, $config['require'])) {
+            $fullBuildSentinelCount++;
+        }
+
+        return Process::result('unexpected build');
+    });
 
     $job->handle(app(SatisConfigGenerator::class));
 
-    expect($build->refresh()->status)->toBe(BuildStatus::Failed)
+    expect($build->refresh()->status)->toBe(BuildStatus::TargetDeleted)
         ->and($build->finished_at)->not->toBeNull()
+        ->and($build->served_repo_id)->toBeNull()
+        ->and($build->scope)->toBe(Build::SCOPE_REPOSITORY)
+        ->and($build->target_repo_id)->toBe($original->getKey())
+        ->and($build->target_repo_name)->toBe('vendor/replaced')
+        ->and($fullBuildSentinelCount)->toBe(0)
+        ->and($fullBuildSentinel->refresh()->status)->toBe(RepoStatus::Pending)
         ->and($replacement->refresh()->status)->toBe(RepoStatus::Pending);
     Process::assertNothingRan();
 });
@@ -155,14 +183,17 @@ it('ignores duplicate dispatches after one job claims and completes the durable 
     $repository = ServedRepo::factory()->create(['name' => 'vendor/duplicate']);
     $build = Build::factory()->create([
         'served_repo_id' => $repository->getKey(),
+        'scope' => Build::SCOPE_REPOSITORY,
+        'target_repo_id' => $repository->getKey(),
+        'target_repo_name' => $repository->name,
         'trigger' => 'mcp',
         'status' => BuildStatus::Queued,
         'requested_by' => 'installation',
         'idempotency_key' => 'duplicate-dispatch',
         'request_fingerprint' => hash('sha256', 'request'),
     ]);
-    $first = new BuildSatis(buildId: (int) $build->getKey(), servedRepoId: (int) $repository->getKey());
-    $duplicate = new BuildSatis(buildId: (int) $build->getKey(), servedRepoId: (int) $repository->getKey());
+    $first = new BuildSatis(buildId: (int) $build->getKey());
+    $duplicate = new BuildSatis(buildId: (int) $build->getKey());
     Process::fake([Process::result('satis built')]);
 
     $first->handle(app(SatisConfigGenerator::class));
@@ -176,6 +207,9 @@ it('refuses a duplicate dispatch while another worker holds the durable lease', 
     $repository = ServedRepo::factory()->create(['name' => 'vendor/active-claim']);
     $build = Build::factory()->create([
         'served_repo_id' => $repository->getKey(),
+        'scope' => Build::SCOPE_REPOSITORY,
+        'target_repo_id' => $repository->getKey(),
+        'target_repo_name' => $repository->name,
         'trigger' => 'mcp',
         'status' => BuildStatus::Running,
         'claim_token' => 'bcb45323-e4d4-45e7-9772-e48174360c5b',
@@ -186,7 +220,7 @@ it('refuses a duplicate dispatch while another worker holds the durable lease', 
     ]);
     Process::fake();
 
-    (new BuildSatis(buildId: (int) $build->getKey(), servedRepoId: (int) $repository->getKey()))
+    (new BuildSatis(buildId: (int) $build->getKey()))
         ->handle(app(SatisConfigGenerator::class));
 
     expect($build->refresh()->status)->toBe(BuildStatus::Running)
@@ -361,7 +395,8 @@ it('queues every same-archive build and serializes processing without dispatch-t
         ->and($packageMiddleware[0])->toBeInstanceOf(WithoutOverlapping::class)
         ->and($packageMiddleware[0]->key)->toBe('crate-satis-archive')
         ->and($packageMiddleware[0]->releaseAfter)->toBe(5)
-        ->and($packageMiddleware[0]->expiresAfter)->toBe(600)
+        ->and($packageMiddleware[0]->expiresAfter)->toBe(3600)
+        ->and($packageMiddleware[0]->expiresAfter)->toBeGreaterThanOrEqual($packageJob->timeout)
         ->and($fullMiddleware[0]->key)->toBe($packageMiddleware[0]->key);
 });
 

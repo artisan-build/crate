@@ -6,6 +6,7 @@ namespace ArtisanBuild\CrateServer\Actions;
 
 use ArtisanBuild\CrateContracts\BuildStatus;
 use ArtisanBuild\CrateServer\Models\Build;
+use ArtisanBuild\CrateServer\Models\ServedRepo;
 use Illuminate\Database\UniqueConstraintViolationException;
 
 final class CreateOrReplayMcpBuild
@@ -15,11 +16,14 @@ final class CreateOrReplayMcpBuild
         string $requestedBy,
         string $idempotencyKey,
         string $fingerprint,
-        ?int $servedRepoId,
+        ?ServedRepo $servedRepo,
     ): array {
         try {
             $build = (new Build)->getConnection()->transaction(fn (): Build => Build::query()->create([
-                'served_repo_id' => $servedRepoId,
+                'served_repo_id' => $servedRepo?->getKey(),
+                'scope' => $servedRepo === null ? Build::SCOPE_FULL : Build::SCOPE_REPOSITORY,
+                'target_repo_id' => $servedRepo?->getKey(),
+                'target_repo_name' => $servedRepo?->name,
                 'trigger' => 'mcp',
                 'status' => BuildStatus::Queued,
                 'requested_by' => $requestedBy,
