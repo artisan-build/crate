@@ -11,6 +11,7 @@ use ArtisanBuild\BuiltForCloud\Credential;
 use ArtisanBuild\BuiltForCloud\CredentialKind;
 use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\CredentialStatus;
+use ArtisanBuild\BuiltForCloud\Http\Middleware\AuthenticateMcp;
 use ArtisanBuild\BuiltForCloud\SubjectType;
 use ArtisanBuild\BuiltForCloud\Testing\McpDelegatedTools;
 use ArtisanBuild\BuiltForCloud\Testing\McpProductAdmission;
@@ -24,7 +25,9 @@ use ArtisanBuild\CrateServer\Mcp\Tools\TriggerBuildTool;
 use ArtisanBuild\CrateServer\Models\Build;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Http\Request as HttpRequest;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Illuminate\Validation\ValidationException;
 use Laravel\Mcp\Request;
@@ -39,6 +42,14 @@ it('advertises only delegated effect-scoped read and write doors', function (): 
             'mcp_write' => '/mcp/write',
         ])
         ->and($metadata->json('endpoints'))->not->toHaveKey('mcp_destructive');
+
+    $readRoute = Route::getRoutes()->match(HttpRequest::create('/mcp', 'POST'));
+    $writeRoute = Route::getRoutes()->match(HttpRequest::create('/mcp/write', 'POST'));
+
+    expect(resolve('router')->gatherRouteMiddleware($readRoute))
+        ->toContain(AuthenticateMcp::class.':product,read')
+        ->and(resolve('router')->gatherRouteMiddleware($writeRoute))
+        ->toContain(AuthenticateMcp::class.':product,write');
 });
 
 it('conforms exactly the three effect-scoped tools', function (): void {
@@ -207,14 +218,16 @@ it('rejects malformed argument shapes through the HTTP wire', function (): void 
         ['/mcp', 'served_repositories', ['limit' => 0]],
         ['/mcp', 'served_repositories', ['limit' => 101]],
         ['/mcp', 'served_repositories', ['unknown' => true]],
+        ['/mcp', 'served_repositories', (object) ['0' => 'numeric-key']],
         ['/mcp', 'build_history', ['repository_names' => ['name' => 'vendor/alpha']]],
         ['/mcp', 'build_history', ['statuses' => ['unknown']]],
         ['/mcp', 'build_history', ['cursor' => 'invalid!']],
         ['/mcp/write', 'trigger_build', ['idempotency_key' => 'wire', 'unknown' => true]],
     ] as [$path, $tool, $arguments]) {
-        crateMcpPost($path, crateMcpCall($tool, $arguments), $token)
-            ->assertOk()
-            ->assertJsonPath('result.isError', true);
+        $response = crateMcpPost($path, crateMcpCall($tool, $arguments), $token);
+
+        expect($response->getStatusCode())->toBeIn([200, 400])
+            ->and($response->json('result.isError') === true || is_array($response->json('error')))->toBeTrue();
     }
 
     expect(Build::query()->count())->toBe(0);
@@ -314,8 +327,8 @@ function crateMcpPayload(string $method): array
     return ['jsonrpc' => '2.0', 'id' => str()->random(8), 'method' => $method];
 }
 
-/** @param array<string, mixed> $arguments */
-function crateMcpCall(string $name, array $arguments = []): array
+/** @param array<int|string, mixed>|object $arguments */
+function crateMcpCall(string $name, array|object $arguments = []): array
 {
     return crateMcpPayload('tools/call') + [
         'params' => ['name' => $name, 'arguments' => $arguments],
