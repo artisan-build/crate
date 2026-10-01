@@ -4,19 +4,35 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\CrateServer\Actions;
 
+use ArtisanBuild\CrateServer\Contracts\RepositoryBuildMutex;
 use ArtisanBuild\CrateServer\Jobs\BuildSatis;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
 
-final class RemoveServedRepo
+final readonly class RemoveServedRepo
 {
+    public function __construct(private RepositoryBuildMutex $mutex) {}
+
     public function __invoke(string $name): bool
     {
-        $deleted = ServedRepo::query()->where('name', strtolower($name))->delete();
+        $repository = ServedRepo::query()->where('name', strtolower($name))->first();
 
-        if ($deleted === 1) {
+        if (! $repository instanceof ServedRepo) {
+            return false;
+        }
+
+        $deleted = (bool) $this->mutex->synchronized(
+            (int) $repository->getKey(),
+            static fn (): bool => ServedRepo::query()
+                ->whereKey($repository->getKey())
+                ->where('name', $repository->name)
+                ->delete() === 1,
+        );
+
+        // Never acquire the archive lock while holding the repository lock: workers take them in the opposite order.
+        if ($deleted) {
             BuildSatis::dispatch(trigger: 'repository-removed')->afterCommit();
         }
 
-        return $deleted === 1;
+        return $deleted;
     }
 }

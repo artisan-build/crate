@@ -29,12 +29,14 @@ it('defines build status values', function (): void {
         BuildStatus::Running,
         BuildStatus::Succeeded,
         BuildStatus::Failed,
+        BuildStatus::TargetDeleted,
     ])
         ->and(array_map(fn (BuildStatus $status): string => $status->value, BuildStatus::cases()))->toBe([
             'queued',
             'running',
             'succeeded',
             'failed',
+            'target_deleted',
         ]);
 });
 

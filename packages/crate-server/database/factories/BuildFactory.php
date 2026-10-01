@@ -23,6 +23,9 @@ final class BuildFactory extends Factory
     {
         return [
             'served_repo_id' => null,
+            'scope' => Build::SCOPE_FULL,
+            'target_repo_id' => null,
+            'target_repo_name' => null,
             'trigger' => 'manual',
             'status' => BuildStatus::Queued,
             'output' => null,
@@ -31,10 +34,13 @@ final class BuildFactory extends Factory
         ];
     }
 
-    public function forServedRepo(): self
+    public function forServedRepo(ServedRepo $repo): self
     {
         return $this->state(fn (): array => [
-            'served_repo_id' => ServedRepo::factory(),
+            'served_repo_id' => $repo->getKey(),
+            'scope' => Build::SCOPE_REPOSITORY,
+            'target_repo_id' => $repo->getKey(),
+            'target_repo_name' => $repo->name,
         ]);
     }
 }

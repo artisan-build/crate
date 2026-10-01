@@ -10,6 +10,7 @@ use ArtisanBuild\CrateServer\CrateCredentialDeclaration;
 use ArtisanBuild\CrateServer\CrateServerServiceProvider;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Mcp\Server\McpServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
@@ -29,6 +30,7 @@ abstract class TestCase extends Orchestra
     {
         return [
             BuiltForCloudServiceProvider::class,
+            McpServiceProvider::class,
             CrateServerServiceProvider::class,
         ];
     }
@@ -55,20 +57,36 @@ abstract class TestCase extends Orchestra
             CrateCredentialDeclaration::COMPOSER_PURPOSE => 'consumption',
         ]);
         $app['config']->set('database.default', 'crate');
-        $app['config']->set('database.connections.crate', [
-            'driver' => 'sqlite',
-            'database' => ':memory:',
-            'prefix' => '',
-            'foreign_key_constraints' => true,
-        ]);
-        $app['config']->set('crate-server.database', [
-            'connection' => 'crate',
-            'host' => null,
-            'port' => null,
-            'database' => null,
-            'username' => null,
-            'password' => null,
-        ]);
+        if (getenv('CRATE_POSTGRES_TEST') === '1') {
+            $crateDatabase = [
+                'driver' => 'pgsql',
+                'host' => getenv('CRATE_DB_HOST') ?: '127.0.0.1',
+                'port' => getenv('CRATE_DB_PORT') ?: '5432',
+                'database' => getenv('CRATE_DB_DATABASE') ?: 'crate_mcp_test',
+                'username' => getenv('CRATE_DB_USERNAME') ?: 'root',
+                'password' => getenv('CRATE_DB_PASSWORD') ?: '',
+                'charset' => 'utf8',
+                'prefix' => '',
+                'search_path' => 'public',
+            ];
+            $app['config']->set('database.connections.crate', $crateDatabase);
+            $app['config']->set('crate-server.database', $crateDatabase);
+        } else {
+            $app['config']->set('database.connections.crate', [
+                'driver' => 'sqlite',
+                'database' => ':memory:',
+                'prefix' => '',
+                'foreign_key_constraints' => true,
+            ]);
+            $app['config']->set('crate-server.database', [
+                'connection' => 'crate',
+                'host' => null,
+                'port' => null,
+                'database' => null,
+                'username' => null,
+                'password' => null,
+            ]);
+        }
         $app['config']->set('crate-server.url', 'https://crate.test');
         $app['config']->set('crate-server.archive_disk', 'crate-archive');
         $app['config']->set('crate-server.satis_path', '/fake/vendor/bin/satis');

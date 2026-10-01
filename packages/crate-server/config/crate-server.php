@@ -12,6 +12,11 @@ return [
     'satis_path' => env('CRATE_SATIS_PATH', base_path('satis-tool/bin/satis')),
     'output_dir' => env('CRATE_OUTPUT_DIR', 'satis'),
 
+    'mcp' => [
+        'read_path' => env('CRATE_MCP_READ_PATH', '/mcp'),
+        'write_path' => env('CRATE_MCP_WRITE_PATH', '/mcp/write'),
+    ],
+
     'database' => [
         'connection' => 'crate',
         'host' => env('CRATE_DB_HOST'),

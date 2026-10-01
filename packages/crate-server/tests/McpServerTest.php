@@ -1,0 +1,490 @@
+<?php
+
+declare(strict_types=1);
+
+use ArtisanBuild\BuiltForCloud\Console\ActingPrincipal;
+use ArtisanBuild\BuiltForCloud\Console\ActingPrincipalResolver;
+use ArtisanBuild\BuiltForCloud\Console\ConsoleRole;
+use ArtisanBuild\BuiltForCloud\Console\DelegatedActor;
+use ArtisanBuild\BuiltForCloud\Console\DelegatedClaims;
+use ArtisanBuild\BuiltForCloud\Credential;
+use ArtisanBuild\BuiltForCloud\CredentialKind;
+use ArtisanBuild\BuiltForCloud\CredentialPurpose;
+use ArtisanBuild\BuiltForCloud\CredentialStatus;
+use ArtisanBuild\BuiltForCloud\Http\Middleware\AuthenticateMcp;
+use ArtisanBuild\BuiltForCloud\SubjectType;
+use ArtisanBuild\BuiltForCloud\Testing\McpDelegatedTools;
+use ArtisanBuild\BuiltForCloud\Testing\McpProductAdmission;
+use ArtisanBuild\CrateContracts\BuildStatus;
+use ArtisanBuild\CrateServer\Actions\QueueBuildDispatcher;
+use ArtisanBuild\CrateServer\Actions\RecoverBuildDispatches;
+use ArtisanBuild\CrateServer\Contracts\BuildDispatcher;
+use ArtisanBuild\CrateServer\Jobs\BuildSatis;
+use ArtisanBuild\CrateServer\Mcp\CrateReadMcpServer;
+use ArtisanBuild\CrateServer\Mcp\CrateWriteMcpServer;
+use ArtisanBuild\CrateServer\Mcp\OpaqueCursor;
+use ArtisanBuild\CrateServer\Mcp\Tools\BuildHistoryTool;
+use ArtisanBuild\CrateServer\Mcp\Tools\ServedRepositoriesTool;
+use ArtisanBuild\CrateServer\Mcp\Tools\TriggerBuildTool;
+use ArtisanBuild\CrateServer\Models\Build;
+use ArtisanBuild\CrateServer\Models\ServedRepo;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Http\Request as HttpRequest;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Testing\TestResponse;
+use Illuminate\Validation\ValidationException;
+use Laravel\Mcp\Request;
+use Laravel\Mcp\Response;
+
+it('advertises only delegated effect-scoped read and write doors', function (): void {
+    $metadata = $this->getJson('/bfc/meta')->assertOk();
+
+    expect($metadata->json('capabilities'))->toContain('mcp-serve', 'mcp-delegated', 'mcp-effect-scoped')
+        ->and($metadata->json('endpoints'))->toMatchArray([
+            'mcp' => '/mcp',
+            'mcp_write' => '/mcp/write',
+        ])
+        ->and($metadata->json('endpoints'))->not->toHaveKey('mcp_destructive');
+
+    $readRoute = Route::getRoutes()->match(HttpRequest::create('/mcp', 'POST'));
+    $writeRoute = Route::getRoutes()->match(HttpRequest::create('/mcp/write', 'POST'));
+
+    expect(resolve('router')->gatherRouteMiddleware($readRoute))
+        ->toContain(AuthenticateMcp::class.':product,read')
+        ->and(resolve('router')->gatherRouteMiddleware($writeRoute))
+        ->toContain(AuthenticateMcp::class.':product,write');
+});
+
+it('conforms exactly the three effect-scoped tools', function (): void {
+    McpDelegatedTools::assertConforms(CrateReadMcpServer::class);
+    McpDelegatedTools::assertConforms(CrateWriteMcpServer::class);
+
+    expect(McpDelegatedTools::discover(CrateReadMcpServer::class))->toBe([
+        'tools' => [BuildHistoryTool::class, ServedRepositoriesTool::class],
+        'violations' => [],
+    ])->and(McpDelegatedTools::discover(CrateWriteMcpServer::class))->toBe([
+        'tools' => [TriggerBuildTool::class],
+        'violations' => [],
+    ]);
+});
+
+it('exposes exact tool sets per HTTP door and refuses foreign or cross-door calls without effects', function (): void {
+    Bus::fake();
+    $token = crateMcpCredential();
+    ServedRepo::factory()->create();
+
+    $readTools = crateMcpPost('/mcp', crateMcpPayload('tools/list'), $token)
+        ->assertOk()->json('result.tools.*.name');
+    $writeTools = crateMcpPost('/mcp/write', crateMcpPayload('tools/list'), $token)
+        ->assertOk()->json('result.tools.*.name');
+    sort($readTools);
+    sort($writeTools);
+
+    expect($readTools)->toBe(['build_history', 'served_repositories'])
+        ->and($writeTools)->toBe(['trigger_build']);
+
+    crateMcpPost('/mcp', crateMcpCall('served_repositories'), $token)->assertOk();
+    crateMcpPost('/mcp', crateMcpCall('build_history'), $token)->assertOk();
+
+    foreach ([
+        ['/mcp', 'trigger_build'],
+        ['/mcp', 'delete_repository'],
+        ['/mcp/write', 'served_repositories'],
+        ['/mcp/write', 'purge'],
+    ] as [$path, $tool]) {
+        crateMcpPost($path, crateMcpCall($tool), $token)->assertStatus(400);
+    }
+
+    foreach (['served_repositories', 'build_history'] as $tool) {
+        crateMcpPost('/mcp', crateMcpCall($tool), 'foreign-installation-token')->assertUnauthorized();
+    }
+    crateMcpPost('/mcp/write', crateMcpCall('trigger_build', [
+        'idempotency_key' => 'foreign-key',
+    ]), 'foreign-installation-token')->assertUnauthorized();
+
+    expect(Build::query()->count())->toBe(0);
+    Bus::assertNothingDispatched();
+
+    $triggerPayload = crateMcpCall('trigger_build', [
+        'idempotency_key' => 'local-key',
+    ]);
+    $triggerResponse = crateMcpPost('/mcp/write', $triggerPayload, $token)->assertOk();
+    $triggerResponse->assertJsonPath('result.isError', false);
+    expect(Build::query()->count())->toBe(1);
+    Bus::assertDispatchedTimes(BuildSatis::class, 1);
+});
+
+it('paginates more than one hundred repositories without skips or credential disclosure', function (): void {
+    $sentinel = 'crate-source-credential-sentinel';
+    ServedRepo::factory()->count(105)->sequence(
+        fn ($sequence): array => [
+            'name' => sprintf('vendor/package-%03d', $sequence->index),
+            'source_credential' => $sequence->index === 52 ? $sentinel : null,
+        ],
+    )->create();
+
+    $first = crateToolJson(app(ServedRepositoriesTool::class)->handle(new Request(['limit' => 100])));
+    $second = crateToolJson(app(ServedRepositoriesTool::class)->handle(new Request([
+        'cursor' => $first['next_cursor'],
+        'limit' => 100,
+    ])));
+    $rows = [...$first['repositories'], ...$second['repositories']];
+
+    expect($first['repositories'])->toHaveCount(100)
+        ->and($second['repositories'])->toHaveCount(5)
+        ->and(array_column($rows, 'id'))->toBe(range(1, 105))
+        ->and(array_unique(array_column($rows, 'id')))->toHaveCount(105)
+        ->and(json_encode([$first, $second]))->not->toContain($sentinel)
+        ->and($rows[52]['has_source_credential'])->toBeTrue()
+        ->and($rows[0]['has_source_credential'])->toBeFalse()
+        ->and(crateToolJson(app(ServedRepositoriesTool::class)->handle(new Request))['repositories'])->toHaveCount(25);
+});
+
+it('removes every credential-bearing URL component from serialized repositories', function (): void {
+    $canaries = ['userinfo-canary', 'password-canary', 'query-canary', 'fragment-canary'];
+    ServedRepo::factory()->create([
+        'url' => 'https://userinfo-canary:password-canary@example.test:8443/org/repo.git?token=query-canary#fragment-canary',
+        'source_credential' => '',
+    ]);
+
+    $response = crateToolJson(app(ServedRepositoriesTool::class)->handle(new Request));
+    $serialized = json_encode($response, JSON_THROW_ON_ERROR);
+
+    expect($response['repositories'][0]['url'])->toBe('https://example.test:8443/org/repo.git')
+        ->and($response['repositories'][0]['has_source_credential'])->toBeFalse();
+
+    foreach ($canaries as $canary) {
+        expect($serialized)->not->toContain($canary);
+    }
+});
+
+it('paginates and filters more than one hundred builds with a stable descending cursor', function (): void {
+    $alpha = ServedRepo::factory()->create(['name' => 'vendor/alpha']);
+    $beta = ServedRepo::factory()->create(['name' => 'vendor/beta']);
+
+    Build::factory()->count(105)->sequence(
+        fn ($sequence): array => [
+            'served_repo_id' => $sequence->index % 2 === 0 ? $alpha->getKey() : $beta->getKey(),
+            'scope' => Build::SCOPE_REPOSITORY,
+            'target_repo_id' => $sequence->index % 2 === 0 ? $alpha->getKey() : $beta->getKey(),
+            'target_repo_name' => $sequence->index % 2 === 0 ? $alpha->name : $beta->name,
+            'status' => $sequence->index % 3 === 0 ? BuildStatus::Failed : BuildStatus::Succeeded,
+        ],
+    )->create();
+
+    $first = crateToolJson(app(BuildHistoryTool::class)->handle(new Request(['limit' => 100])));
+    $second = crateToolJson(app(BuildHistoryTool::class)->handle(new Request([
+        'cursor' => $first['next_cursor'],
+        'limit' => 100,
+    ])));
+    $ids = array_column([...$first['builds'], ...$second['builds']], 'id');
+    $filtered = crateToolJson(app(BuildHistoryTool::class)->handle(new Request([
+        'repository_names' => ['vendor/alpha'],
+        'statuses' => ['failed'],
+        'limit' => 100,
+    ])));
+
+    expect($first['builds'])->toHaveCount(100)
+        ->and($second['builds'])->toHaveCount(5)
+        ->and($ids)->toBe(range(105, 1))
+        ->and(array_unique($ids))->toHaveCount(105)
+        ->and($filtered['builds'])->not->toBeEmpty();
+
+    foreach ($filtered['builds'] as $build) {
+        expect($build['repository']['name'])->toBe('vendor/alpha')
+            ->and($build['status'])->toBe('failed');
+    }
+});
+
+it('closes wire schemas and rejects malformed runtime arguments', function (): void {
+    $repositorySchema = app(ServedRepositoriesTool::class)->toArray()['inputSchema'];
+    $historySchema = app(BuildHistoryTool::class)->toArray()['inputSchema'];
+    $triggerSchema = app(TriggerBuildTool::class)->toArray()['inputSchema'];
+
+    expect($repositorySchema['additionalProperties'])->toBeFalse()
+        ->and($historySchema['additionalProperties'])->toBeFalse()
+        ->and($triggerSchema['additionalProperties'])->toBeFalse()
+        ->and($historySchema['properties']['repository_names']['type'])->toBe('array')
+        ->and($historySchema['properties']['statuses']['items']['enum'])->toBe(array_column(BuildStatus::cases(), 'value'));
+
+    $invalidRepositories = [
+        ['unknown' => true],
+        [0 => 'numeric-key'],
+        ['limit' => 0],
+        ['limit' => 101],
+        ['cursor' => 'invalid!'],
+    ];
+    foreach ($invalidRepositories as $arguments) {
+        expect(fn () => app(ServedRepositoriesTool::class)->handle(new Request($arguments)))
+            ->toThrow(ValidationException::class);
+    }
+
+    $invalidHistory = [
+        ['repository_names' => ['name' => 'vendor/alpha']],
+        ['statuses' => ['status' => 'failed']],
+        ['statuses' => ['unknown']],
+        ['build_ids' => ['id' => 1]],
+        ['cursor' => OpaqueCursor::encode('served_repositories', 1)],
+    ];
+    foreach ($invalidHistory as $arguments) {
+        expect(fn () => app(BuildHistoryTool::class)->handle(new Request($arguments)))
+            ->toThrow(ValidationException::class);
+    }
+
+    expect(fn () => app(TriggerBuildTool::class)->handle(
+        new Request(['idempotency_key' => 'key', 'extra' => true]),
+        app(ActingPrincipalResolver::class),
+    ))->toThrow(ValidationException::class);
+});
+
+it('rejects malformed argument shapes through the HTTP wire', function (): void {
+    $token = crateMcpCredential();
+
+    foreach ([
+        ['/mcp', 'served_repositories', ['limit' => 0]],
+        ['/mcp', 'served_repositories', ['limit' => 101]],
+        ['/mcp', 'served_repositories', ['unknown' => true]],
+        ['/mcp', 'served_repositories', (object) ['0' => 'numeric-key']],
+        ['/mcp', 'build_history', ['repository_names' => ['name' => 'vendor/alpha']]],
+        ['/mcp', 'build_history', ['statuses' => ['unknown']]],
+        ['/mcp', 'build_history', ['cursor' => 'invalid!']],
+        ['/mcp/write', 'trigger_build', ['idempotency_key' => 'wire', 'unknown' => true]],
+    ] as [$path, $tool, $arguments]) {
+        $response = crateMcpPost($path, crateMcpCall($tool, $arguments), $token);
+
+        expect($response->getStatusCode())->toBeIn([200, 400])
+            ->and($response->json('result.isError') === true || is_array($response->json('error')))->toBeTrue();
+    }
+
+    expect(Build::query()->count())->toBe(0);
+});
+
+it('atomically suppresses exact duplicate trigger requests and conflicts on changed reuse', function (): void {
+    Bus::fake();
+    $alpha = ServedRepo::factory()->create(['name' => 'vendor/alpha']);
+    ServedRepo::factory()->create(['name' => 'vendor/beta']);
+    $tool = app(TriggerBuildTool::class);
+    $principals = app(ActingPrincipalResolver::class);
+
+    $first = crateToolJson($tool->handle(new Request([
+        'idempotency_key' => 'build-key',
+        'repository_name' => $alpha->name,
+    ]), $principals));
+    $duplicate = crateToolJson($tool->handle(new Request([
+        'idempotency_key' => 'build-key',
+        'repository_name' => $alpha->name,
+    ]), $principals));
+    $conflict = $tool->handle(new Request([
+        'idempotency_key' => 'build-key',
+        'repository_name' => 'vendor/beta',
+    ]), $principals);
+
+    expect($first['duplicate'])->toBeFalse()
+        ->and($duplicate['duplicate'])->toBeTrue()
+        ->and($duplicate['build_id'])->toBe($first['build_id'])
+        ->and($first['status_handle'])->toBe([
+            'tool' => 'build_history',
+            'arguments' => ['build_ids' => [$first['build_id']]],
+        ])
+        ->and((string) $conflict->content())->toBe('idempotency_key_conflict')
+        ->and($conflict->isError())->toBeTrue()
+        ->and(Build::query()->firstOrFail()->scope)->toBe(Build::SCOPE_REPOSITORY)
+        ->and(Build::query()->firstOrFail()->target_repo_id)->toBe($alpha->getKey())
+        ->and(Build::query()->firstOrFail()->target_repo_name)->toBe($alpha->name)
+        ->and(Build::query()->count())->toBe(1);
+
+    Bus::assertDispatchedTimes(BuildSatis::class, 2);
+
+    expect(fn () => Build::query()->create([
+        'served_repo_id' => $alpha->getKey(),
+        'trigger' => 'mcp',
+        'status' => BuildStatus::Queued,
+        'requested_by' => 'installation',
+        'idempotency_key' => 'build-key',
+        'request_fingerprint' => str_repeat('a', 64),
+    ]))->toThrow(UniqueConstraintViolationException::class);
+});
+
+it('returns the same terminal target deleted result on retries after repository deletion', function (): void {
+    Bus::fake();
+    $repository = ServedRepo::factory()->create(['name' => 'vendor/rotated']);
+    $fullBuildSentinel = ServedRepo::factory()->create(['name' => 'vendor/full-build-sentinel']);
+    $tool = app(TriggerBuildTool::class);
+    $principals = app(ActingPrincipalResolver::class);
+    $arguments = [
+        'idempotency_key' => 'deleted-repository-key',
+        'repository_name' => $repository->name,
+    ];
+
+    $first = crateToolJson($tool->handle(new Request($arguments), $principals));
+    $firstRetryBuild = Build::query()->findOrFail($first['build_id']);
+    $concurrentRetryBuild = Build::query()->findOrFail($first['build_id']);
+    $repository->delete();
+    $replayMethod = new ReflectionMethod($tool, 'replay');
+    $replayResponse = $replayMethod->invoke($tool, $firstRetryBuild, $firstRetryBuild->request_fingerprint);
+    $concurrentReplayResponse = $replayMethod->invoke(
+        $tool,
+        $concurrentRetryBuild,
+        $concurrentRetryBuild->request_fingerprint,
+    );
+    expect($replayResponse)->toBeInstanceOf(Response::class)
+        ->and($concurrentReplayResponse)->toBeInstanceOf(Response::class);
+    $replay = crateToolJson($replayResponse);
+    $terminalReplay = crateToolJson($concurrentReplayResponse);
+    $conflict = $tool->handle(new Request([
+        'idempotency_key' => 'deleted-repository-key',
+        'repository_name' => 'vendor/no-longer-present',
+    ]), $principals);
+
+    $build = Build::query()->findOrFail($first['build_id']);
+    $history = crateToolJson(app(BuildHistoryTool::class)->handle(new Request([
+        'build_ids' => [$build->getKey()],
+    ])));
+
+    expect($replay)->toBe($terminalReplay)
+        ->and($replay['build_id'])->toBe($first['build_id'])
+        ->and($replay['duplicate'])->toBeTrue()
+        ->and($replay['status'])->toBe(BuildStatus::TargetDeleted->value)
+        ->and($conflict->isError())->toBeTrue()
+        ->and((string) $conflict->content())->toBe('idempotency_key_conflict')
+        ->and(Build::query()->count())->toBe(1)
+        ->and($build->served_repo_id)->toBeNull()
+        ->and($build->scope)->toBe(Build::SCOPE_REPOSITORY)
+        ->and($build->target_repo_id)->toBe($repository->getKey())
+        ->and($build->target_repo_name)->toBe('vendor/rotated')
+        ->and($history['builds'][0]['repository'])->toBe([
+            'id' => $repository->getKey(),
+            'name' => 'vendor/rotated',
+        ])
+        ->and($fullBuildSentinel->refresh()->status->value)->toBe('pending');
+    Bus::assertDispatchedTimes(BuildSatis::class, 1);
+});
+
+it('returns target deleted when an exact retry follows deletion of an actively claimed target', function (): void {
+    Bus::fake();
+    $repository = ServedRepo::factory()->create(['name' => 'vendor/claimed-before-delete']);
+    $tool = app(TriggerBuildTool::class);
+    $principals = app(ActingPrincipalResolver::class);
+    $arguments = [
+        'idempotency_key' => 'claimed-target-key',
+        'repository_name' => $repository->name,
+    ];
+    $first = crateToolJson($tool->handle(new Request($arguments), $principals));
+    $build = Build::query()->findOrFail($first['build_id']);
+    $build->update([
+        'status' => BuildStatus::Running,
+        'claim_token' => '19f654fc-b96f-46e8-847d-f2c12d6ca5ad',
+        'lease_expires_at' => now()->addHour(),
+    ]);
+    $repository->delete();
+
+    $replay = crateToolJson($tool->handle(new Request($arguments), $principals));
+
+    expect($replay['build_id'])->toBe($first['build_id'])
+        ->and($replay['status'])->toBe(BuildStatus::TargetDeleted->value)
+        ->and($replay['duplicate'])->toBeTrue()
+        ->and($build->refresh()->claim_token)->toBeNull()
+        ->and($build->lease_expires_at)->toBeNull();
+    Bus::assertDispatchedTimes(BuildSatis::class, 1);
+});
+
+it('recovers a durable queued row when immediate dispatch fails after commit', function (): void {
+    app()->instance(BuildDispatcher::class, new class implements BuildDispatcher
+    {
+        public function dispatch(Build $build): void
+        {
+            throw new RuntimeException('injected queue outage');
+        }
+    });
+
+    $response = crateToolJson(app(TriggerBuildTool::class)->handle(
+        new Request(['idempotency_key' => 'dispatch-fault']),
+        app(ActingPrincipalResolver::class),
+    ));
+
+    $build = Build::query()->findOrFail($response['build_id']);
+
+    expect($response['status'])->toBe(BuildStatus::Queued->value)
+        ->and($build->status)->toBe(BuildStatus::Queued)
+        ->and($build->scope)->toBe(Build::SCOPE_FULL)
+        ->and($build->target_repo_id)->toBeNull()
+        ->and($build->target_repo_name)->toBeNull();
+
+    Bus::fake();
+    app()->instance(BuildDispatcher::class, app(QueueBuildDispatcher::class));
+
+    expect(app(RecoverBuildDispatches::class)->handle())->toBe(0);
+    Bus::assertDispatched(BuildSatis::class, fn (BuildSatis $job): bool => $job->buildId === $response['build_id']);
+});
+
+it('preserves the class-qualified delegated actor on triggered builds', function (): void {
+    Bus::fake();
+    $actor = DelegatedActor::query()->create([
+        'identity_hash' => DelegatedActor::identityHash('https://scalpels.test', 'operator-1'),
+        'issuer' => 'https://scalpels.test',
+        'subject' => 'operator-1',
+        'last_handoff_display_name' => 'Operator',
+        'last_handoff_role' => ConsoleRole::Member,
+    ]);
+    $principal = ActingPrincipal::delegatedRequest($actor, new DelegatedClaims(
+        displayName: 'Operator',
+        role: ConsoleRole::Member,
+        onBehalfOf: 'Team',
+    ));
+    app('request')->attributes->set('bfc.request_assertion_principal', $principal);
+
+    app(TriggerBuildTool::class)->handle(
+        new Request(['idempotency_key' => 'delegated-key']),
+        app(ActingPrincipalResolver::class),
+    );
+
+    expect(Build::query()->firstOrFail()->requested_by)->toBe($actor->getAuthIdentifier())
+        ->and($actor->getAuthIdentifier())->toStartWith(DelegatedActor::IDENTIFIER_PREFIX);
+});
+
+it('passes the framework MCP product-admission conformance helper', function (): void {
+    McpProductAdmission::assert();
+});
+
+function crateMcpCredential(): string
+{
+    $plaintext = 'crate-mcp-'.bin2hex(random_bytes(16));
+    Credential::query()->create([
+        'kind' => CredentialKind::Bearer,
+        'purpose' => CredentialPurpose::Mcp,
+        'subject_type' => SubjectType::Installation,
+        'subject_ref' => 'crate-installation',
+        'name' => 'Crate MCP',
+        'status' => CredentialStatus::Active,
+        'secret_hash' => hash('sha256', $plaintext),
+    ]);
+
+    return $plaintext;
+}
+
+/** @return array<string, mixed> */
+function crateMcpPayload(string $method): array
+{
+    return ['jsonrpc' => '2.0', 'id' => str()->random(8), 'method' => $method];
+}
+
+/** @param array<int|string, mixed>|object $arguments */
+function crateMcpCall(string $name, array|object $arguments = []): array
+{
+    return crateMcpPayload('tools/call') + [
+        'params' => ['name' => $name, 'arguments' => $arguments],
+    ];
+}
+
+/** @param array<string, mixed> $payload */
+function crateMcpPost(string $path, array $payload, string $token): TestResponse
+{
+    return test()->postJson($path, $payload, ['Authorization' => 'Bearer '.$token]);
+}
+
+/** @return array<string, mixed> */
+function crateToolJson(Response $response): array
+{
+    return json_decode((string) $response->content(), true, flags: JSON_THROW_ON_ERROR);
+}

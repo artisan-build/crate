@@ -119,7 +119,7 @@ final class RepositoryController
             'url' => $repo->url,
             'type' => $repo->type->value,
             'status' => $repo->status->value,
-            'has_source_credential' => filled($repo->source_credential),
+            'has_source_credential' => $repo->has_source_credential,
             'last_built_at' => $repo->last_built_at?->toIso8601String(),
         ];
     }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use ArtisanBuild\CrateContracts\RepoStatus;
 use ArtisanBuild\CrateContracts\RepoType;
+use ArtisanBuild\CrateServer\Contracts\RepositoryBuildMutex;
 use ArtisanBuild\CrateServer\Jobs\BuildSatis;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
 use Carbon\CarbonInterface;
@@ -96,13 +97,29 @@ it('rejects malformed served repo names', function (): void {
 });
 
 it('removes an existing served repo from the console command', function (): void {
-    ServedRepo::factory()->create(['name' => 'vendor/package']);
+    Bus::fake();
+    $repository = ServedRepo::factory()->create(['name' => 'vendor/package']);
+    $mutex = new class implements RepositoryBuildMutex
+    {
+        /** @var list<int> */
+        public array $repositoryIds = [];
+
+        public function synchronized(int $repositoryId, Closure $callback): mixed
+        {
+            $this->repositoryIds[] = $repositoryId;
+
+            return $callback();
+        }
+    };
+    app()->instance(RepositoryBuildMutex::class, $mutex);
 
     $this->artisan('crate:repos:remove', [
         'name' => 'vendor/package',
     ])->assertSuccessful();
 
-    expect(ServedRepo::query()->where('name', 'vendor/package')->exists())->toBeFalse();
+    expect(ServedRepo::query()->where('name', 'vendor/package')->exists())->toBeFalse()
+        ->and($mutex->repositoryIds)->toBe([(int) $repository->getKey()]);
+    Bus::assertDispatched(BuildSatis::class, fn (BuildSatis $job): bool => $job->trigger === 'repository-removed');
 });
 
 it('fails when removing a missing served repo', function (): void {
