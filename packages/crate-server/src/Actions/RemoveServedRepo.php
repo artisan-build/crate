@@ -28,6 +28,7 @@ final readonly class RemoveServedRepo
                 ->delete() === 1,
         );
 
+        // Never acquire the archive lock while holding the repository lock: workers take them in the opposite order.
         if ($deleted) {
             BuildSatis::dispatch(trigger: 'repository-removed')->afterCommit();
         }

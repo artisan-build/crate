@@ -58,25 +58,33 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
             return;
         }
 
-        $servedRepo = $this->package === null
-            ? null
-            : ServedRepo::query()->where('name', $this->package)->first();
+        if ($this->package !== null) {
+            $servedRepo = ServedRepo::query()->where('name', $this->package)->first();
 
-        if ($this->package !== null && $servedRepo === null) {
+            if (! $servedRepo instanceof ServedRepo) {
+                return;
+            }
+
+            $this->executeRepositoryBuild(
+                $generator,
+                (int) $servedRepo->getKey(),
+                $servedRepo->name,
+            );
+
             return;
         }
 
         $build = Build::query()->create([
-            'served_repo_id' => $servedRepo?->getKey(),
-            'scope' => $servedRepo === null ? Build::SCOPE_FULL : Build::SCOPE_REPOSITORY,
-            'target_repo_id' => $servedRepo?->getKey(),
-            'target_repo_name' => $servedRepo?->name,
+            'served_repo_id' => null,
+            'scope' => Build::SCOPE_FULL,
+            'target_repo_id' => null,
+            'target_repo_name' => null,
             'trigger' => $this->trigger,
             'status' => BuildStatus::Running,
             'started_at' => now(),
         ]);
 
-        $this->executeBuild($generator, $build, $servedRepo, $this->package);
+        $this->executeBuild($generator, $build, null, null);
     }
 
     private function handleDurableBuild(SatisConfigGenerator $generator): void
@@ -91,29 +99,12 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
             $build = Build::query()->findOrFail($this->buildId);
 
             if ($build->scope === Build::SCOPE_REPOSITORY) {
-                app(RepositoryBuildMutex::class)->synchronized(
+                $this->executeRepositoryBuild(
+                    $generator,
                     (int) $build->target_repo_id,
-                    function () use ($generator, $build, $claimToken): void {
-                        $servedRepo = $this->targetRepository($build);
-
-                        if (! $servedRepo instanceof ServedRepo) {
-                            $this->finishBuild([
-                                'status' => BuildStatus::TargetDeleted,
-                                'output' => 'The requested repository target was deleted.',
-                                'finished_at' => now(),
-                            ], $claimToken);
-
-                            return;
-                        }
-
-                        $this->executeBuild(
-                            $generator,
-                            $build,
-                            $servedRepo,
-                            $build->target_repo_name,
-                            $claimToken,
-                        );
-                    },
+                    (string) $build->target_repo_name,
+                    $build,
+                    $claimToken,
                 );
 
                 return;
@@ -198,6 +189,52 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
             ->whereKey($build->target_repo_id)
             ->where('name', $build->target_repo_name)
             ->first();
+    }
+
+    private function executeRepositoryBuild(
+        SatisConfigGenerator $generator,
+        int $repositoryId,
+        string $repositoryName,
+        ?Build $build = null,
+        ?string $claimToken = null,
+    ): void {
+        // Queue middleware acquires the archive lock first; removal releases this lock before dispatching archive work.
+        app(RepositoryBuildMutex::class)->synchronized(
+            $repositoryId,
+            function () use ($generator, $repositoryId, $repositoryName, $build, $claimToken): void {
+                $servedRepo = ServedRepo::query()
+                    ->whereKey($repositoryId)
+                    ->where('name', $repositoryName)
+                    ->first();
+                $build ??= Build::query()->create([
+                    'served_repo_id' => $servedRepo?->getKey(),
+                    'scope' => Build::SCOPE_REPOSITORY,
+                    'target_repo_id' => $repositoryId,
+                    'target_repo_name' => $repositoryName,
+                    'trigger' => $this->trigger,
+                    'status' => BuildStatus::Running,
+                    'started_at' => now(),
+                ]);
+
+                if (! $servedRepo instanceof ServedRepo) {
+                    $this->finishBuild([
+                        'status' => BuildStatus::TargetDeleted,
+                        'output' => 'The requested repository target was deleted.',
+                        'finished_at' => now(),
+                    ], $claimToken, $build);
+
+                    return;
+                }
+
+                $this->executeBuild(
+                    $generator,
+                    $build,
+                    $servedRepo,
+                    $repositoryName,
+                    $claimToken,
+                );
+            },
+        );
     }
 
     private function executeBuild(
