@@ -7,6 +7,7 @@ use ArtisanBuild\CrateContracts\RepoStatus;
 use ArtisanBuild\CrateContracts\RepoType;
 use ArtisanBuild\CrateServer\Actions\AddServedRepo;
 use ArtisanBuild\CrateServer\Actions\CacheRepositoryBuildMutex;
+use ArtisanBuild\CrateServer\Actions\RemoveServedRepo;
 use ArtisanBuild\CrateServer\Actions\SetSourceCredential;
 use ArtisanBuild\CrateServer\Contracts\RepositoryBuildMutex;
 use ArtisanBuild\CrateServer\Jobs\BuildSatis;
@@ -89,33 +90,64 @@ it('holds deletion until an incremental build finishes for every dispatcher', fu
 
     $mutex = new class($repo) implements RepositoryBuildMutex
     {
-        public int $calls = 0;
+        public int $attempts = 0;
 
-        public bool $deletionWaiting = false;
+        public int $completed = 0;
 
-        public bool $deletionCompleted = false;
+        private bool $locked = false;
+
+        private ?Fiber $waiter = null;
 
         public function __construct(private readonly ServedRepo $repository) {}
 
         public function synchronized(int $repositoryId, Closure $callback): mixed
         {
-            $this->calls++;
+            $this->attempts++;
             expect($repositoryId)->toBe($this->repository->getKey());
-            $this->deletionWaiting = true;
 
-            $result = $callback();
+            if ($this->locked) {
+                $waiter = Fiber::getCurrent();
 
-            $this->repository->delete();
-            $this->deletionCompleted = true;
+                if (! $waiter instanceof Fiber || $this->waiter instanceof Fiber) {
+                    throw new RuntimeException('Expected one Fiber-based mutex waiter.');
+                }
 
-            return $result;
+                $this->waiter = $waiter;
+                Fiber::suspend();
+            }
+
+            $this->locked = true;
+
+            try {
+                $result = $callback();
+                $this->completed++;
+
+                return $result;
+            } finally {
+                $this->locked = false;
+
+                if ($this->waiter?->isSuspended()) {
+                    $waiter = $this->waiter;
+                    $this->waiter = null;
+                    $waiter->resume();
+                }
+            }
         }
     };
     app()->instance(RepositoryBuildMutex::class, $mutex);
+    $removal = null;
+    $removalResult = null;
 
-    Process::fake(function () use ($mutex, $repo) {
-        expect($mutex->deletionWaiting)->toBeTrue()
-            ->and($mutex->deletionCompleted)->toBeFalse()
+    Process::fake(function () use ($mutex, $repo, &$removal, &$removalResult) {
+        $removal = new Fiber(function () use ($repo, &$removalResult): void {
+            $removalResult = app(RemoveServedRepo::class)($repo->name);
+        });
+        $removal->start();
+
+        expect($mutex->attempts)->toBe(2)
+            ->and($mutex->completed)->toBe(0)
+            ->and($removal->isSuspended())->toBeTrue()
+            ->and($removalResult)->toBeNull()
             ->and($repo->fresh())->toBeInstanceOf(ServedRepo::class);
 
         return Process::result('satis built');
@@ -125,8 +157,11 @@ it('holds deletion until an incremental build finishes for every dispatcher', fu
 
     $build = Build::query()->firstOrFail();
 
-    expect($mutex->calls)->toBe(1)
-        ->and($mutex->deletionCompleted)->toBeTrue()
+    expect($mutex->attempts)->toBe(2)
+        ->and($mutex->completed)->toBe(2)
+        ->and($removal)->toBeInstanceOf(Fiber::class)
+        ->and($removal->isTerminated())->toBeTrue()
+        ->and($removalResult)->toBeTrue()
         ->and($repo->fresh())->toBeNull()
         ->and($build->status)->toBe(BuildStatus::Succeeded)
         ->and($build->served_repo_id)->toBeNull()
@@ -134,7 +169,8 @@ it('holds deletion until an incremental build finishes for every dispatcher', fu
         ->and($build->target_repo_id)->toBe($repo->getKey())
         ->and($build->target_repo_name)->toBe($repo->name);
     Process::assertRanTimes(fn (): bool => true, 1);
-    Queue::assertNotPushed(BuildSatis::class, fn (BuildSatis $queued): bool => $queued->package === null);
+    Queue::assertPushed(BuildSatis::class, fn (BuildSatis $queued): bool => $queued->package === null
+        && $queued->trigger === 'repository-removed');
 })->with([
     'AddServedRepo' => 'repository-added',
     'SetSourceCredential' => 'source-credential-replaced',
