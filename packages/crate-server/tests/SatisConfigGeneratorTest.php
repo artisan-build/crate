@@ -6,6 +6,11 @@ use ArtisanBuild\CrateContracts\RepoType;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
 use ArtisanBuild\CrateServer\SatisConfigGenerator;
 
+it('derives the registry URL from the host application URL', function (): void {
+    expect(config('crate-server.url'))->toBe(config('app.url'))
+        ->and(config('crate-server.url'))->toBe('https://crate.test');
+});
+
 it('generates full and incremental satis config with dist mirroring enabled', function (): void {
     ServedRepo::factory()->create([
         'name' => 'vendor/package-a',

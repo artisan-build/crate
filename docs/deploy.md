@@ -16,7 +16,7 @@ Create these resources in Laravel Cloud and attach them to the Crate environment
 
 Cardinal rule: never hand-set Cloud-injected resource environment variables. Laravel Cloud injects database, queue, cache, filesystem connection selectors, credentials, and endpoints into the environment. Do not set `DB_*`, `QUEUE_*`, `CACHE_*`, or `FILESYSTEM_DISK` yourself; overriding Cloud's injected values breaks the managed resource.
 
-`php artisan crate:install` only writes Crate's own application config: `CRATE_URL`, `CRATE_ARCHIVE_DISK`, and `CRATE_SATIS_PATH`. It never writes Cloud-managed database, queue, cache, or filesystem env.
+`php artisan crate:install` only writes Crate's own storage and executable config: `CRATE_ARCHIVE_DISK` and `CRATE_SATIS_PATH`. It never writes the application's URL or Cloud-managed database, queue, cache, or filesystem env.
 
 ## Build Command
 
@@ -64,23 +64,11 @@ Ensure `git` is available anywhere Satis runs, including the build and queue run
 
 ## Configure
 
-Configuration must be in place before the first build. In particular, `CRATE_URL` is required: if it is unset when `crate:build` runs, the generated `satis.json` contains `homepage: null` and `archive.prefix-url: null`, and Satis fails the entire build with this cryptic error:
-
-```
-In BuildCommand.php line 416:
-
-  The json config file does not match the expected JSON schema
-```
-
-If you see that error, check `CRATE_URL` first.
+Crate uses the host application's `config('app.url')` for the Satis homepage and archive prefix. There is no separate Crate server URL to configure.
 
 ### On Laravel Cloud
 
-Set `CRATE_URL` as a Cloud environment variable — in the dashboard, or via the Cloud CLI:
-
-```bash
-cloud environment:variables <env> --action=set --key=CRATE_URL --value=https://crate.example.com
-```
+Laravel Cloud supplies the application's URL. To attach a custom domain, follow Scalpels' [Use your own domain](https://docs.scalpels.app) guide; Crate follows the new address automatically, with no URL environment variable to set.
 
 `CRATE_SATIS_PATH` needs no value when the build command runs `crate:install-satis`; the config default already points at what it installed.
 
@@ -100,14 +88,12 @@ php artisan crate:install
 # --satis-path is the Satis EXECUTABLE inside the isolated install from the
 # Build Command step, not the install directory
 php artisan crate:install --no-interaction \
-  --url="https://crate.example.com" \
   --archive-disk="crate-archive" \
   --satis-path="/var/www/satis-tool/bin/satis"
 ```
 
 The installer is idempotent and will not overwrite an existing value without confirmation (pass `--force` non-interactively). It configures only these app values:
 
-- `CRATE_URL`: the public Crate registry URL used as the Satis homepage and archive prefix.
 - `CRATE_ARCHIVE_DISK`: the object-storage filesystem disk name Crate should use for Satis output and mirrored archives.
 - `CRATE_SATIS_PATH`: the path to the isolated Satis executable (`<install-dir>/bin/satis`), which the build job executes directly. The config default is `base_path('satis-tool/bin/satis')`, where `crate:install-satis` installs it — set this only when Satis lives elsewhere, as it does in the hand-rolled VM install above.
 Then run migrations:
@@ -118,7 +104,7 @@ php artisan migrate --force
 
 ## First Run
 
-The order matters. Configure first (`CRATE_URL`, and `CRATE_ARCHIVE_DISK` / `CRATE_SATIS_PATH` if you are not using their defaults), then migrate, then register repositories, then build. Running `crate:build` before `CRATE_URL` is set fails with the JSON-schema error described in Configure.
+The order matters. Configure `CRATE_ARCHIVE_DISK` / `CRATE_SATIS_PATH` first if you are not using their defaults, then migrate, register repositories, and build.
 
 Sign in through the Built for Cloud package UI and create a personal or installation-owned Basic credential for `crate.composer.consume`. Owner, Admin, and Member can all manage credentials. The package shows delivery material once; transfer it directly to the consumer's secret store.
 

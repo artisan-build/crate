@@ -180,7 +180,7 @@ Additive-within-major discipline (no field removed/repurposed in a major); round
 - **Human HTTP API:** every Member lists repositories/builds and replaces/clears source credentials;
   only Admin/Owner add or remove repositories. Shell commands run as explicit system authority.
 - **Satis integration:** `SatisConfigGenerator` writes `satis.json` from `served_repos`
-  (`require-dist-mirroring: true`, `archive` config, `homepage = CRATE_URL`, per-repo auth injected
+  (`require-dist-mirroring: true`, `archive` config, `homepage = config('app.url')`, per-repo auth injected
   from the encrypted source creds into a scoped Composer `auth.json` for the build). `BuildSatis`
   queued job shells out to the isolated Satis tool via Symfony Process, writes output + mirrored
   archives to the object-storage disk, records a `builds` row.
@@ -221,7 +221,7 @@ discipline.
 ## Configuration
 
 App config only (never set Cloud-injected resource env — DB/QUEUE/CACHE/FILESYSTEM are injected):
-- `CRATE_URL` — public base URL; becomes Satis `homepage` so dist URLs route back through the gate.
+- `config('app.url')` — public base URL; becomes Satis `homepage` so dist URLs route back through the gate.
 - `CRATE_ARCHIVE_DISK` — object-storage disk for Satis output + mirrored archives (default the
   Cloud-injected object store).
 - `CRATE_SATIS_PATH` — path to the isolated Satis tool installed by the build step.

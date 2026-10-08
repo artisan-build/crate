@@ -29,13 +29,11 @@ it('writes only crate app env values in non-interactive mode', function (): void
     $this->artisan('crate:install', [
         '--no-interaction' => true,
         '--path' => $path,
-        '--url' => 'https://crate.example.com',
         '--archive-disk' => 'crate-archive',
         '--satis-path' => '/app/vendor/bin/satis/bin/satis',
     ])->assertSuccessful();
 
     expect(crateReadEnv($path))->toBe([
-        'CRATE_URL' => 'https://crate.example.com',
         'CRATE_ARCHIVE_DISK' => 'crate-archive',
         'CRATE_SATIS_PATH' => '/app/vendor/bin/satis/bin/satis',
     ])->not->toHaveKeys([
@@ -43,6 +41,7 @@ it('writes only crate app env values in non-interactive mode', function (): void
         'QUEUE_CONNECTION',
         'CACHE_STORE',
         'FILESYSTEM_DISK',
+        'CRATE_URL',
     ]);
 });
 
@@ -52,7 +51,6 @@ it('is idempotent when the desired values are already configured', function (): 
     $arguments = [
         '--no-interaction' => true,
         '--path' => $path,
-        '--url' => 'https://crate.example.com',
         '--archive-disk' => 'crate-archive',
         '--satis-path' => '/app/vendor/bin/satis/bin/satis',
     ];
@@ -68,45 +66,15 @@ it('is idempotent when the desired values are already configured', function (): 
     expect(filemtime($path))->toBe($modifiedAt);
 });
 
-it('does not clobber existing values non-interactively without force', function (): void {
-    $path = crateTempEnv('CRATE_URL=https://old.example.com'.PHP_EOL);
-
-    $this->artisan('crate:install', [
-        '--no-interaction' => true,
-        '--path' => $path,
-        '--url' => 'https://new.example.com',
-    ])
-        ->expectsOutput('Kept existing CRATE_URL; pass --force to overwrite.')
-        ->expectsOutput('Crate is already configured; no changes.')
-        ->assertSuccessful();
-
-    expect(crateReadEnv($path)['CRATE_URL'])->toBe('https://old.example.com');
-});
-
-it('clobbers existing values non-interactively with force', function (): void {
-    $path = crateTempEnv('CRATE_URL=https://old.example.com'.PHP_EOL);
-
-    $this->artisan('crate:install', [
-        '--no-interaction' => true,
-        '--force' => true,
-        '--path' => $path,
-        '--url' => 'https://new.example.com',
-    ])->assertSuccessful();
-
-    expect(crateReadEnv($path)['CRATE_URL'])->toBe('https://new.example.com');
-});
-
 it('writes answered values interactively', function (): void {
     $path = crateTempEnv();
 
     $this->artisan('crate:install', ['--path' => $path])
-        ->expectsQuestion('Crate public URL', 'https://crate.example.com')
         ->expectsQuestion('Crate archive disk', 'crate-archive')
         ->expectsQuestion('Satis binary path', '/app/vendor/bin/satis/bin/satis')
         ->assertSuccessful();
 
     expect(crateReadEnv($path))->toBe([
-        'CRATE_URL' => 'https://crate.example.com',
         'CRATE_ARCHIVE_DISK' => 'crate-archive',
         'CRATE_SATIS_PATH' => '/app/vendor/bin/satis/bin/satis',
     ]);
@@ -119,13 +87,14 @@ it('preserves unrelated existing env keys', function (): void {
         'QUEUE_CONNECTION=redis',
         'CACHE_STORE=redis',
         'FILESYSTEM_DISK=s3',
+        'CUSTOM_KEY=custom-value',
         '',
     ]));
 
     $this->artisan('crate:install', [
         '--no-interaction' => true,
         '--path' => $path,
-        '--url' => 'https://crate.example.com',
+        '--archive-disk' => 'crate-archive',
     ])->assertSuccessful();
 
     $values = crateReadEnv($path);
@@ -136,7 +105,8 @@ it('preserves unrelated existing env keys', function (): void {
         'QUEUE_CONNECTION' => 'redis',
         'CACHE_STORE' => 'redis',
         'FILESYSTEM_DISK' => 's3',
-        'CRATE_URL' => 'https://crate.example.com',
+        'CUSTOM_KEY' => 'custom-value',
+        'CRATE_ARCHIVE_DISK' => 'crate-archive',
     ]);
 });
 
