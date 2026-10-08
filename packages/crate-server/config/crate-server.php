@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 return [
-    'url' => env('CRATE_URL'),
+    'url' => config('app.url'),
     'archive_disk' => env('CRATE_ARCHIVE_DISK', env('FILESYSTEM_DISK', 'local')),
     // The Satis EXECUTABLE (BuildSatis runs this path directly), not an install
     // directory. The default is where `php artisan crate:install-satis` puts the

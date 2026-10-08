@@ -82,7 +82,7 @@ Crate is a private Composer registry that you run in your own Laravel Cloud acco
 
    Enable the scheduler so Crate can dispatch its daily rebuild, and make sure the managed queue is processing jobs. `git` must be available in the build and queue runtimes so Satis can read VCS repositories.
 
-   Use the environment's default Cloud URL, or attach your own domain. You will use that exact URL for `APP_URL` and `CRATE_URL` below.
+   Use the environment's default Cloud URL, or follow Scalpels' [Use your own domain](https://docs.scalpels.app) guide. Crate follows the environment's address automatically; there is no URL environment variable to set.
 
 8. Point your checkout at your own Cloud application, then find its environment ID:
 
@@ -94,14 +94,7 @@ Crate is a private Composer registry that you run in your own Laravel Cloud acco
 
    The first command gives you the application and organization IDs required by `repo:config`. This repository includes a `.cloud/config.json`; `cloud repo:config` replaces its defaults with your application and organization. Copy the `id` for the environment you are deploying.
 
-9. Set only the app-specific environment values. You can use the Cloud dashboard's environment-variable settings or run:
-
-   ```bash
-   cloud environment:variables <environment-id> --action=set --key=APP_URL --value=https://crate.example.com --force -n --json
-   cloud environment:variables <environment-id> --action=set --key=CRATE_URL --value=https://crate.example.com --force -n --json
-   ```
-
-   Replace `https://crate.example.com` with the Cloud URL or attached domain from step 7.
+9. Do not set a URL environment variable. Laravel Cloud supplies the application's address, including an attached custom domain, and Crate uses it for Satis metadata and archive links.
 
    **Never set environment variables for resources that Laravel Cloud provisions**, including the database, cache, queue, or bucket. Cloud injects their credentials and connection names. Values that you set yourself override those injected values and break the resource.
 
@@ -167,7 +160,6 @@ For more detail, including traditional or VM deployments, see [`docs/deploy.md`]
 
 | Environment variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `CRATE_URL` | Yes | none | Public registry URL written into Satis metadata and archive links. |
 | `CRATE_ARCHIVE_DISK` | No | `FILESYSTEM_DISK`, then `local` | Laravel filesystem disk for generated metadata and mirrored archives. |
 | `CRATE_SATIS_PATH` | No | `<app>/satis-tool/bin/satis` | Satis executable. The standard build command installs it here. |
 | `CRATE_OUTPUT_DIR` | No | `satis` | Directory prefix on the archive disk. |
@@ -181,7 +173,6 @@ Leave every `CRATE_DB_*` value unset to use the application's default database. 
 
 ## Troubleshooting
 
-- **Satis says its JSON does not match the schema:** set `CRATE_URL` before running `crate:build`.
 - **`satis-tool/bin/satis` is missing:** confirm the Laravel Cloud build command runs `php artisan crate:install-satis` after Composer installs the app dependencies.
 - **A build stays queued:** confirm a managed queue is attached and processing jobs. Do not set `QUEUE_CONNECTION` yourself.
 - **Composer receives `401 Unauthorized`:** use an active Basic credential for `crate.composer.consume`. A bearer credential, revoked credential, or credential for another purpose cannot read registry files.

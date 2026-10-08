@@ -32,11 +32,11 @@ The command dispatches `ArtisanBuild\CrateServer\Jobs\BuildSatis`. A full build 
 
 `SatisConfigGenerator` builds `satis.json` from the database:
 
-- `homepage` is `CRATE_URL`.
+- `homepage` is the host application's `config('app.url')`.
 - repositories come from `served_repos`.
 - full builds require all registered packages.
 - incremental builds require the requested package only.
-- archives are configured as zip files under `dist` with `prefix-url` set to `CRATE_URL`.
+- archives are configured as zip files under `dist` with `prefix-url` set to the host application's `config('app.url')`.
 
 For source credentials, the generator writes a scoped Composer auth config for the build process. GitHub hosts use `github-oauth`; other hosts use bearer auth.
 
@@ -74,9 +74,10 @@ Traversal attempts containing `..` are rejected before storage access.
 
 Published config key: `crate-server`.
 
+Crate uses the host application's `config('app.url')` as the public registry URL in Satis metadata and dist archive URLs. There is no separate server URL environment variable.
+
 Environment variables:
 
-- `CRATE_URL`: public registry URL used by Satis metadata and dist archive URLs. Required before the first build: when unset, `SatisConfigGenerator` emits `homepage: null` and `archive.prefix-url: null`, and Satis rejects the config with `The json config file does not match the expected JSON schema`.
 - `CRATE_ARCHIVE_DISK`: storage disk for generated metadata and mirrored archives. Defaults to `FILESYSTEM_DISK` then `local` (on Laravel Cloud, `FILESYSTEM_DISK` is the `private` disk wired to object storage, which works).
 - `CRATE_SATIS_PATH`: path to the isolated Satis executable (`<install-dir>/bin/satis`), executed directly by `BuildSatis`. Defaults to `base_path('satis-tool/bin/satis')` — where `php artisan crate:install-satis` installs it. That install has its own dependency tree and is not part of the app's vendor tree, so the isolation still holds. Set it explicitly only when Satis lives somewhere else.
 - `CRATE_OUTPUT_DIR`: storage prefix for generated registry output. Defaults to `satis`.

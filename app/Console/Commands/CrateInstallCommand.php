@@ -12,7 +12,6 @@ final class CrateInstallCommand extends SystemAuthorityCommand
     use WritesInstallEnv;
 
     protected $signature = 'crate:install
-        {--url= : Public Crate base URL}
         {--archive-disk= : Crate archive filesystem disk name}
         {--satis-path= : Path to the isolated Satis binary}
         {--force : Overwrite existing values without prompting}
@@ -24,11 +23,6 @@ final class CrateInstallCommand extends SystemAuthorityCommand
      * @var array<string, array{option: string, prompt: string, default: string}>
      */
     private const array KEYS = [
-        'CRATE_URL' => [
-            'option' => 'url',
-            'prompt' => 'Crate public URL',
-            'default' => '',
-        ],
         'CRATE_ARCHIVE_DISK' => [
             'option' => 'archive-disk',
             'prompt' => 'Crate archive disk',
