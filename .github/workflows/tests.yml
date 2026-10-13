@@ -59,3 +59,66 @@ jobs:
 
       - name: Run Package Tests
         run: composer packages:check
+
+  lowest-deps:
+    name: tests (lowest deps) - Laravel ${{ matrix.laravel }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - laravel: '11'
+            illuminate: ^11.17
+            testbench: ^9.0
+            pest: ^3.0
+          - laravel: '12'
+            illuminate: ^12.0
+            testbench: ^10.0
+            pest: ^3.0
+          - laravel: '13'
+            illuminate: ^13.0
+            testbench: ^11.0
+            pest: ^4.0
+
+    defaults:
+      run:
+        working-directory: packages/crate-client
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          tools: composer:v2
+          coverage: none
+
+      - name: Pin Laravel ${{ matrix.laravel }} dependencies
+        run: >-
+          composer require --no-update
+          "illuminate/console:${{ matrix.illuminate }}"
+          "illuminate/contracts:${{ matrix.illuminate }}"
+          "illuminate/http:${{ matrix.illuminate }}"
+          "illuminate/support:${{ matrix.illuminate }}"
+
+      - name: Pin test dependencies
+        run: >-
+          composer require --dev --no-update
+          "orchestra/testbench:${{ matrix.testbench }}"
+          "pestphp/pest:${{ matrix.pest }}"
+
+      - name: Allow intentional lowest dependency versions
+        run: composer config audit.block-insecure false
+
+      - name: Install lowest dependencies
+        run: composer update --prefer-lowest --prefer-stable -W --no-interaction
+
+      - name: Show resolved Laravel version
+        run: composer show laravel/framework
+
+      - name: Run package tests
+        run: composer test
