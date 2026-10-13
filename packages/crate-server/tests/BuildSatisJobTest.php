@@ -15,11 +15,17 @@ use ArtisanBuild\CrateServer\Models\Build;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
 use ArtisanBuild\CrateServer\SatisConfigGenerator;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Process\PendingProcess;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
+use Illuminate\Queue\Worker;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
 it('records a succeeded full build and mirrors satis output', function (): void {
@@ -670,3 +676,133 @@ it('deletes temporary auth json after successful and failed builds', function (i
         ->and(File::exists($authPath))->toBeFalse()
         ->and(File::exists(dirname($authPath)))->toBeFalse();
 })->with([0, 1]);
+
+/**
+ * Queue tables live on their own untransacted connection: a timeout failure rolls the
+ * failed-job connection back to level 0, which would discard RefreshDatabase's transaction.
+ */
+function useDatabaseQueueForBuildSatis(): void
+{
+    config()->set('database.connections.build-satis-queue', [
+        'driver' => 'sqlite',
+        'database' => ':memory:',
+        'prefix' => '',
+    ]);
+    config()->set('queue.connections.database', [
+        'driver' => 'database',
+        'connection' => 'build-satis-queue',
+        'table' => 'jobs',
+        'queue' => 'default',
+        'retry_after' => 90,
+        'after_commit' => false,
+    ]);
+    config()->set('queue.failed', [
+        'driver' => 'database-uuids',
+        'database' => 'build-satis-queue',
+        'table' => 'failed_jobs',
+    ]);
+
+    Schema::connection('build-satis-queue')->create('jobs', function (Blueprint $table): void {
+        $table->id();
+        $table->string('queue')->index();
+        $table->longText('payload');
+        $table->unsignedTinyInteger('attempts');
+        $table->unsignedInteger('reserved_at')->nullable();
+        $table->unsignedInteger('available_at');
+        $table->unsignedInteger('created_at');
+    });
+    Schema::connection('build-satis-queue')->create('failed_jobs', function (Blueprint $table): void {
+        $table->id();
+        $table->string('uuid')->unique();
+        $table->text('connection');
+        $table->text('queue');
+        $table->longText('payload');
+        $table->longText('exception');
+        $table->timestamp('failed_at')->useCurrent();
+    });
+}
+
+/** Run a real daemon worker (default --tries=1) for at most one job. */
+function runBuildSatisWorker(): void
+{
+    Artisan::call('queue:work', [
+        'connection' => 'database',
+        '--max-jobs' => 1,
+        '--stop-when-empty' => true,
+        '--sleep' => 0,
+        '--memory' => 1024,
+    ]);
+}
+
+it('fails a build killed by the worker timeout instead of retrying it without bound', function (): void {
+    useDatabaseQueueForBuildSatis();
+    ServedRepo::factory()->create(['name' => 'vendor/package']);
+    Process::fake();
+
+    // Hang outside the job's own try/catch so the timeout leaves the job the way a killed worker does.
+    app()->instance(RepositoryBuildMutex::class, new class implements RepositoryBuildMutex
+    {
+        public function synchronized(int $repositoryId, Closure $callback): mixed
+        {
+            sleep(5);
+
+            return $callback();
+        }
+    });
+
+    BuildSatis::dispatch('vendor/package')->onConnection('database');
+
+    // Same worker timeout path, shortened from 3300 seconds to 1 second.
+    $row = DB::connection('build-satis-queue')->table('jobs')->sole();
+    $payload = json_decode((string) $row->payload, true, flags: JSON_THROW_ON_ERROR);
+    $payload['timeout'] = 1;
+    DB::connection('build-satis-queue')->table('jobs')->where('id', $row->id)->update(['payload' => json_encode($payload)]);
+
+    // In production the SIGALRM handler exits the worker; here it throws so the suite survives.
+    Worker::$killOnTimeout = false;
+
+    try {
+        for ($run = 0; $run < 3 && DB::connection('build-satis-queue')->table('jobs')->exists(); $run++) {
+            $this->travel(91)->seconds();
+            runBuildSatisWorker();
+        }
+    } finally {
+        Worker::$killOnTimeout = true;
+    }
+
+    expect(DB::connection('build-satis-queue')->table('jobs')->count())->toBe(0)
+        ->and(DB::connection('build-satis-queue')->table('failed_jobs')->count())->toBe(1)
+        ->and(DB::connection('build-satis-queue')->table('failed_jobs')->value('exception'))->toContain('TimeoutExceededException')
+        ->and($run)->toBe(1);
+    Process::assertNothingRan();
+});
+
+it('keeps retrying a lock-contended build on a tries=1 worker until it runs', function (): void {
+    useDatabaseQueueForBuildSatis();
+    Storage::fake('crate-archive');
+    ServedRepo::factory()->create(['name' => 'vendor/package']);
+    Process::fake(['*' => Process::result('satis built')]);
+
+    BuildSatis::dispatch('vendor/package')->onConnection('database');
+
+    $job = new BuildSatis('vendor/package');
+    $lock = Cache::lock($job->middleware()[0]->getLockKey($job), 3600);
+    expect($lock->get())->toBeTrue();
+
+    foreach (range(1, 3) as $contendedRun) {
+        runBuildSatisWorker();
+        $this->travel(6)->seconds();
+    }
+
+    expect(DB::connection('build-satis-queue')->table('jobs')->value('attempts'))->toBe(3)
+        ->and(DB::connection('build-satis-queue')->table('failed_jobs')->count())->toBe(0)
+        ->and(Build::query()->count())->toBe(0);
+
+    $lock->release();
+    runBuildSatisWorker();
+
+    expect(DB::connection('build-satis-queue')->table('jobs')->count())->toBe(0)
+        ->and(DB::connection('build-satis-queue')->table('failed_jobs')->count())->toBe(0)
+        ->and(Build::query()->sole()->status)->toBe(BuildStatus::Succeeded);
+    Process::assertRanTimes(fn (PendingProcess $process): bool => true, 1);
+});
