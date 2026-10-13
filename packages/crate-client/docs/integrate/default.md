@@ -6,7 +6,7 @@ Require the published client package:
 composer require artisan-build/crate-client
 ```
 
-The package requires PHP 8.3 or newer within the `^8.3` constraint and Laravel 13 (`illuminate/* ^13.0`). Laravel discovers `ArtisanBuild\CrateClient\CrateClientServiceProvider` from the package manifest.
+The package requires PHP 8.3 or newer within the `^8.3` constraint and Laravel 11.17, 12, or 13 (`illuminate/* ^11.17 || ^12.0 || ^13.0`). Laravel discovers `ArtisanBuild\CrateClient\CrateClientServiceProvider` from the package manifest.
 
 The provider merges the package configuration automatically. Publish it only when the app needs a local config file:
 
