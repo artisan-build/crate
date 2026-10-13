@@ -34,6 +34,9 @@ final class BuildSatis implements ShouldQueue, SystemAuthorityQueueEntry
     /** Keep the worker timeout below the durable claim lease. */
     public int $timeout = 3300;
 
+    /** A build killed by the timeout fails once instead of retrying forever under unlimited tries. */
+    public bool $failOnTimeout = true;
+
     public function __construct(
         public readonly ?string $package = null,
         public readonly string $trigger = 'manual',
