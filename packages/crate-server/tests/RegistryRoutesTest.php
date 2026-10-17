@@ -151,6 +151,16 @@ it('returns indistinguishable 401 responses without streaming for invalid creden
 
             return test()->withHeader('Authorization', 'Bearer '.$secret)->get('/packages.json');
         })(),
+        'mismatched subject ref' => (function (): TestResponse {
+            $user = crateServerUser();
+            [, $secret] = crateServerBasicCredential([
+                'subject_type' => SubjectType::UserPrincipal,
+                'subject_ref' => 'crate-user:someone-else',
+                'user_id' => (string) $user->getKey(),
+            ]);
+
+            return crateServerAuthenticatedGet('/packages.json', $secret);
+        })(),
         default => throw new LogicException('Unknown fixture.'),
     };
 
@@ -169,6 +179,7 @@ it('returns indistinguishable 401 responses without streaming for invalid creden
     'revoked',
     'inactive account',
     'bearer presented',
+    'mismatched subject ref',
 ]);
 
 it('keeps installation Basic access independent of creator and authority mode', function (): void {
