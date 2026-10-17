@@ -161,6 +161,30 @@ it('returns indistinguishable 401 responses without streaming for invalid creden
 
             return crateServerAuthenticatedGet('/packages.json', $secret);
         })(),
+        'account row with installation subject' => (function (): TestResponse {
+            $user = crateServerUser();
+            [, $secret] = crateServerBasicCredential([
+                'subject_type' => SubjectType::Installation,
+                'subject_ref' => 'crate-user:'.$user->getKey(),
+                'user_id' => (string) $user->getKey(),
+            ]);
+
+            return crateServerAuthenticatedGet('/packages.json', $secret);
+        })(),
+        'dangling account user' => (function (): TestResponse {
+            [, $secret] = crateServerBasicCredential([
+                'subject_type' => SubjectType::UserPrincipal,
+                'subject_ref' => 'crate-user:4294967295',
+                'user_id' => '4294967295',
+            ]);
+
+            return crateServerAuthenticatedGet('/packages.json', $secret);
+        })(),
+        'empty subject ref' => (function (): TestResponse {
+            [, $secret] = crateServerBasicCredential(['subject_ref' => '']);
+
+            return crateServerAuthenticatedGet('/packages.json', $secret);
+        })(),
         default => throw new LogicException('Unknown fixture.'),
     };
 
@@ -180,6 +204,9 @@ it('returns indistinguishable 401 responses without streaming for invalid creden
     'inactive account',
     'bearer presented',
     'mismatched subject ref',
+    'account row with installation subject',
+    'dangling account user',
+    'empty subject ref',
 ]);
 
 it('keeps installation Basic access independent of creator and authority mode', function (): void {
@@ -190,6 +217,12 @@ it('keeps installation Basic access independent of creator and authority mode', 
     expect(InstallationAuthority::change(InstallationAuthority::current(), AuthorityMode::Managed))->not->toBeNull();
 
     crateServerAuthenticatedGet('/packages.json', $secret)->assertOk();
+});
+
+it('refuses with the standard challenge when the configured guard is not a credential guard', function (): void {
+    config()->set('built-for-cloud.credentials.guard', 'web');
+
+    crateServerAuthenticatedGet('/packages.json', 'any-secret')->assertUnauthorized();
 });
 
 it('returns a 404 for a missing file with a valid credential', function (): void {
