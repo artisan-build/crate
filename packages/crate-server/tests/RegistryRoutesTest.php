@@ -146,6 +146,11 @@ it('returns indistinguishable 401 responses without streaming for invalid creden
 
             return crateServerAuthenticatedGet('/packages.json', $secret);
         })(),
+        'bearer presented' => (function (): TestResponse {
+            [, $secret] = crateServerBasicCredential(['kind' => CredentialKind::Bearer]);
+
+            return test()->withHeader('Authorization', 'Bearer '.$secret)->get('/packages.json');
+        })(),
         default => throw new LogicException('Unknown fixture.'),
     };
 
@@ -163,6 +168,7 @@ it('returns indistinguishable 401 responses without streaming for invalid creden
     'expired',
     'revoked',
     'inactive account',
+    'bearer presented',
 ]);
 
 it('keeps installation Basic access independent of creator and authority mode', function (): void {
