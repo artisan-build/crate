@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use ArtisanBuild\BuiltForCloud\Console\ActingPrincipal;
 use ArtisanBuild\BuiltForCloud\Console\ActingPrincipalResolver;
+use ArtisanBuild\BuiltForCloud\Console\ConsoleKeyring;
 use ArtisanBuild\BuiltForCloud\Console\ConsoleRole;
 use ArtisanBuild\BuiltForCloud\Console\DelegatedActor;
 use ArtisanBuild\BuiltForCloud\Console\DelegatedClaims;
@@ -11,31 +12,42 @@ use ArtisanBuild\BuiltForCloud\Credential;
 use ArtisanBuild\BuiltForCloud\CredentialKind;
 use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\CredentialStatus;
+use ArtisanBuild\BuiltForCloud\Exceptions\NoActingPrincipal;
 use ArtisanBuild\BuiltForCloud\Http\Middleware\AuthenticateMcp;
 use ArtisanBuild\BuiltForCloud\SubjectType;
-use ArtisanBuild\BuiltForCloud\Testing\McpDelegatedTools;
 use ArtisanBuild\BuiltForCloud\Testing\McpProductAdmission;
+use ArtisanBuild\BuiltForCloud\User;
 use ArtisanBuild\CrateContracts\BuildStatus;
 use ArtisanBuild\CrateServer\Actions\QueueBuildDispatcher;
 use ArtisanBuild\CrateServer\Actions\RecoverBuildDispatches;
 use ArtisanBuild\CrateServer\Contracts\BuildDispatcher;
 use ArtisanBuild\CrateServer\Jobs\BuildSatis;
-use ArtisanBuild\CrateServer\Mcp\CrateReadMcpServer;
-use ArtisanBuild\CrateServer\Mcp\CrateWriteMcpServer;
 use ArtisanBuild\CrateServer\Mcp\OpaqueCursor;
 use ArtisanBuild\CrateServer\Mcp\Tools\BuildHistoryTool;
 use ArtisanBuild\CrateServer\Mcp\Tools\ServedRepositoriesTool;
 use ArtisanBuild\CrateServer\Mcp\Tools\TriggerBuildTool;
 use ArtisanBuild\CrateServer\Models\Build;
 use ArtisanBuild\CrateServer\Models\ServedRepo;
+use Carbon\CarbonImmutable;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request as HttpRequest;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Illuminate\Validation\ValidationException;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
+use ParagonIE\Paseto\Builder;
+use ParagonIE\Paseto\Keys\Version4\AsymmetricSecretKey;
+use ParagonIE\Paseto\Protocol\Version4;
+use ParagonIE\Paseto\Purpose;
+
+beforeEach(function (): void {
+    $credential = crateMcpCredentialRecord();
+    app('request')->setUserResolver(static fn (): Credential => $credential);
+});
 
 it('advertises only delegated effect-scoped read and write doors', function (): void {
     $metadata = $this->getJson('/bfc/meta')->assertOk();
@@ -54,19 +66,6 @@ it('advertises only delegated effect-scoped read and write doors', function (): 
         ->toContain(AuthenticateMcp::class.':product,read')
         ->and(resolve('router')->gatherRouteMiddleware($writeRoute))
         ->toContain(AuthenticateMcp::class.':product,write');
-});
-
-it('conforms exactly the three effect-scoped tools', function (): void {
-    McpDelegatedTools::assertConforms(CrateReadMcpServer::class);
-    McpDelegatedTools::assertConforms(CrateWriteMcpServer::class);
-
-    expect(McpDelegatedTools::discover(CrateReadMcpServer::class))->toBe([
-        'tools' => [BuildHistoryTool::class, ServedRepositoriesTool::class],
-        'violations' => [],
-    ])->and(McpDelegatedTools::discover(CrateWriteMcpServer::class))->toBe([
-        'tools' => [TriggerBuildTool::class],
-        'violations' => [],
-    ]);
 });
 
 it('exposes exact tool sets per HTTP door and refuses foreign or cross-door calls without effects', function (): void {
@@ -113,6 +112,46 @@ it('exposes exact tool sets per HTTP door and refuses foreign or cross-door call
     $triggerResponse->assertJsonPath('result.isError', false);
     expect(Build::query()->count())->toBe(1);
     Bus::assertDispatchedTimes(BuildSatis::class, 1);
+});
+
+it('requires identity before validation or Crate data access in every tool', function (): void {
+    app()->instance('request', HttpRequest::create('/mcp', 'POST'));
+    $crateQueries = [];
+    DB::listen(static function (QueryExecuted $query) use (&$crateQueries): void {
+        if (preg_match('/\b(?:builds|served_repos)\b/i', $query->sql) === 1) {
+            $crateQueries[] = $query->sql;
+        }
+    });
+
+    expect(fn () => app(ServedRepositoriesTool::class)->handle(new Request(['limit' => 0])))
+        ->toThrow(NoActingPrincipal::class)
+        ->and(fn () => app(BuildHistoryTool::class)->handle(new Request(['limit' => 0])))
+        ->toThrow(NoActingPrincipal::class)
+        ->and(fn () => app(TriggerBuildTool::class)->handle(
+            new Request([]),
+            app(ActingPrincipalResolver::class),
+        ))->toThrow(NoActingPrincipal::class)
+        ->and($crateQueries)->toBe([]);
+});
+
+it('refuses an offboarded delegated subject before Crate data access or dispatch', function (): void {
+    Bus::fake();
+    $token = crateInactiveDelegatedAssertion('offboarded-operator');
+    $crateQueries = [];
+    DB::listen(static function (QueryExecuted $query) use (&$crateQueries): void {
+        if (preg_match('/\b(?:builds|served_repos)\b/i', $query->sql) === 1) {
+            $crateQueries[] = $query->sql;
+        }
+    });
+
+    crateMcpPost('/mcp/write', crateMcpCall('trigger_build', [
+        'idempotency_key' => 'offboarded-key',
+    ]), $token)
+        ->assertUnauthorized()
+        ->assertExactJson(['message' => 'Unauthenticated.']);
+
+    expect($crateQueries)->toBe([]);
+    Bus::assertNothingDispatched();
 });
 
 it('paginates more than one hundred repositories without skips or credential disclosure', function (): void {
@@ -266,6 +305,7 @@ it('atomically suppresses exact duplicate trigger requests and conflicts on chan
     ServedRepo::factory()->create(['name' => 'vendor/beta']);
     $tool = app(TriggerBuildTool::class);
     $principals = app(ActingPrincipalResolver::class);
+    $requestedBy = (string) $principals->resolve()->identifier();
 
     $first = crateToolJson($tool->handle(new Request([
         'idempotency_key' => 'build-key',
@@ -300,7 +340,7 @@ it('atomically suppresses exact duplicate trigger requests and conflicts on chan
         'served_repo_id' => $alpha->getKey(),
         'trigger' => 'mcp',
         'status' => BuildStatus::Queued,
-        'requested_by' => 'installation',
+        'requested_by' => $requestedBy,
         'idempotency_key' => 'build-key',
         'request_fingerprint' => str_repeat('a', 64),
     ]))->toThrow(UniqueConstraintViolationException::class);
@@ -418,15 +458,21 @@ it('recovers a durable queued row when immediate dispatch fails after commit', f
     Bus::assertDispatched(BuildSatis::class, fn (BuildSatis $job): bool => $job->buildId === $response['build_id']);
 });
 
-it('preserves the class-qualified delegated actor on triggered builds', function (): void {
+it('does not alias a delegated actor to a local user with the same numeric id', function (): void {
     Bus::fake();
-    $actor = DelegatedActor::query()->create([
+    $user = User::query()->create([
+        'name' => 'Numeric Collision',
+        'email' => 'numeric-collision@example.test',
+    ]);
+    $actor = new DelegatedActor;
+    $actor->forceFill([
+        'id' => $user->getKey(),
         'identity_hash' => DelegatedActor::identityHash('https://scalpels.test', 'operator-1'),
         'issuer' => 'https://scalpels.test',
         'subject' => 'operator-1',
         'last_handoff_display_name' => 'Operator',
         'last_handoff_role' => ConsoleRole::Member,
-    ]);
+    ])->save();
     $principal = ActingPrincipal::delegatedRequest($actor, new DelegatedClaims(
         displayName: 'Operator',
         role: ConsoleRole::Member,
@@ -439,8 +485,11 @@ it('preserves the class-qualified delegated actor on triggered builds', function
         app(ActingPrincipalResolver::class),
     );
 
-    expect(Build::query()->firstOrFail()->requested_by)->toBe($actor->getAuthIdentifier())
-        ->and($actor->getAuthIdentifier())->toStartWith(DelegatedActor::IDENTIFIER_PREFIX);
+    expect($actor->getKey())->toBe($user->getKey())
+        ->and($actor->getAuthIdentifier())->toBe(DelegatedActor::IDENTIFIER_PREFIX.$user->getKey())
+        ->and($actor->getAuthIdentifier())->not->toBe((string) $user->getAuthIdentifier())
+        ->and(Build::query()->firstOrFail()->requested_by)->toBe($actor->getAuthIdentifier())
+        ->and(Build::query()->where('requested_by', (string) $user->getAuthIdentifier())->exists())->toBeFalse();
 });
 
 it('passes the framework MCP product-admission conformance helper', function (): void {
@@ -450,7 +499,17 @@ it('passes the framework MCP product-admission conformance helper', function ():
 function crateMcpCredential(): string
 {
     $plaintext = 'crate-mcp-'.bin2hex(random_bytes(16));
-    Credential::query()->create([
+
+    crateMcpCredentialRecord($plaintext);
+
+    return $plaintext;
+}
+
+function crateMcpCredentialRecord(?string $plaintext = null): Credential
+{
+    $plaintext ??= 'crate-mcp-'.bin2hex(random_bytes(16));
+
+    return Credential::query()->create([
         'kind' => CredentialKind::Bearer,
         'purpose' => CredentialPurpose::Mcp,
         'subject_type' => SubjectType::Installation,
@@ -459,8 +518,64 @@ function crateMcpCredential(): string
         'status' => CredentialStatus::Active,
         'secret_hash' => hash('sha256', $plaintext),
     ]);
+}
 
-    return $plaintext;
+function crateInactiveDelegatedAssertion(string $subject): string
+{
+    $issuer = 'https://scalpels.test';
+    $audience = 'https://crate.test';
+    $keyId = 'crate-test-'.bin2hex(random_bytes(6));
+    config([
+        'built-for-cloud.console.issuer' => $issuer,
+        'built-for-cloud.console.audience' => $audience,
+    ]);
+
+    $secret = null;
+    foreach (range(1, 16) as $ignored) {
+        $candidate = AsymmetricSecretKey::generate(new Version4);
+        if (strlen($candidate->raw()) === SODIUM_CRYPTO_SIGN_SECRETKEYBYTES) {
+            $secret = $candidate;
+
+            break;
+        }
+    }
+    if (! $secret instanceof AsymmetricSecretKey) {
+        throw new RuntimeException('Could not generate a delegated assertion signing key.');
+    }
+
+    $keyring = app(ConsoleKeyring::class);
+    $keyring->add($keyId, $secret->getPublicKey()->toHexString());
+    $keyring->activate($keyId);
+    $now = CarbonImmutable::now();
+    $token = (new Builder)
+        ->setVersion(new Version4)
+        ->setPurpose(Purpose::public())
+        ->setKey($secret)
+        ->setClaims([
+            'iss' => $issuer,
+            'sub' => $subject,
+            'aud' => $audience,
+            'iat' => $now->toAtomString(),
+            'nbf' => $now->toAtomString(),
+            'exp' => $now->addSeconds(60)->toAtomString(),
+            'jti' => 'crate-test-'.bin2hex(random_bytes(8)),
+            'display_name' => 'Offboarded Operator',
+            'role' => ConsoleRole::Member->value,
+            'purpose' => 'mcp',
+        ])
+        ->setFooterArray(['kid' => $keyId])
+        ->toString();
+
+    DelegatedActor::query()->create([
+        'identity_hash' => DelegatedActor::identityHash($issuer, $subject),
+        'issuer' => $issuer,
+        'subject' => $subject,
+        'last_handoff_display_name' => 'Offboarded Operator',
+        'last_handoff_role' => ConsoleRole::Member,
+        'deactivated_at' => $now,
+    ]);
+
+    return $token;
 }
 
 /** @return array<string, mixed> */
