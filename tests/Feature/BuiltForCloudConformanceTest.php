@@ -22,11 +22,14 @@ use ArtisanBuild\BuiltForCloud\Commands\SigningRootEnsureCommand;
 use ArtisanBuild\BuiltForCloud\Commands\SigningRootProvisionCommand;
 use ArtisanBuild\BuiltForCloud\Commands\SubjectOffboardCommand;
 use ArtisanBuild\BuiltForCloud\Commands\WarnExpiringCredentialsCommand;
+use ArtisanBuild\BuiltForCloud\Console\ActingPrincipal;
 use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\Jobs\DeliverOwnershipWebhook;
 use ArtisanBuild\BuiltForCloud\Testing\ConsumerConformance;
 use ArtisanBuild\BuiltForCloud\Testing\ContractAssertions;
 use ArtisanBuild\BuiltForCloud\Testing\FleetConformance;
+use ArtisanBuild\BuiltForCloud\Testing\McpDelegatedEnforcement;
+use ArtisanBuild\BuiltForCloud\User;
 use ArtisanBuild\CrateClient\Commands\CrateAuthCommand;
 use ArtisanBuild\CrateServer\Commands\CrateBuildCommand;
 use ArtisanBuild\CrateServer\Commands\CrateInstallSatisCommand;
@@ -37,13 +40,20 @@ use ArtisanBuild\CrateServer\Commands\CrateReposRemoveCommand;
 use ArtisanBuild\CrateServer\CrateCredentialDeclaration;
 use ArtisanBuild\CrateServer\Jobs\BuildSatis;
 use ArtisanBuild\CrateServer\Mcp\CrateReadMcpServer;
+use ArtisanBuild\CrateServer\Mcp\CrateWriteMcpServer;
 use ArtisanBuild\CrateServer\Mcp\Tools\BuildHistoryTool;
 use ArtisanBuild\CrateServer\Mcp\Tools\ServedRepositoriesTool;
+use ArtisanBuild\CrateServer\Mcp\Tools\TriggerBuildTool;
+use ArtisanBuild\CrateServer\Models\Build;
 use Composer\InstalledVersions;
+use Illuminate\Support\Facades\Bus;
+use Laravel\Mcp\Response;
 
 uses(ContractAssertions::class);
 
 it('passes the unified auth consumer conformance spec', function (): void {
+    Bus::fake();
+
     $packageRoot = InstalledVersions::getInstallPath('artisan-build/built-for-cloud');
     expect($packageRoot)->toBeString();
 
@@ -150,6 +160,54 @@ it('passes the unified auth consumer conformance spec', function (): void {
             ServedRepositoriesTool::class,
         ]),
     ];
+
+    McpDelegatedEnforcement::assertHonors(
+        CrateReadMcpServer::class,
+        [ServedRepositoriesTool::class, BuildHistoryTool::class],
+    );
+    McpDelegatedEnforcement::assertHonors(
+        CrateWriteMcpServer::class,
+        [TriggerBuildTool::class],
+        negativeAuthorization: static function (
+            ActingPrincipal $first,
+            ActingPrincipal $second,
+            Closure $invoke,
+        ): void {
+            $idempotencyKey = 'x';
+            $firstIdentifier = (string) $first->identifier();
+            $secondIdentifier = (string) $second->identifier();
+            $firstBuild = Build::query()
+                ->where('requested_by', $firstIdentifier)
+                ->where('idempotency_key', $idempotencyKey)
+                ->sole();
+
+            $collidingUser = new User;
+            $collidingUser->forceFill([
+                'id' => $first->delegatedActor?->getKey(),
+                'name' => 'Numeric Collision',
+                'email' => 'numeric-collision@example.test',
+            ])->save();
+
+            $response = $invoke(TriggerBuildTool::class, [
+                'idempotency_key' => $idempotencyKey,
+            ]);
+            expect($response)->toBeInstanceOf(Response::class);
+            $payload = json_decode((string) $response->content(), true, flags: JSON_THROW_ON_ERROR);
+            $secondBuild = Build::query()->findOrFail($payload['build_id']);
+
+            expect($firstIdentifier)->toStartWith('bfc-console:')
+                ->and($secondIdentifier)->toStartWith('bfc-console:')
+                ->and($first->delegatedActor?->getKey())->toBe($collidingUser->getKey())
+                ->and($firstIdentifier)->not->toBe((string) $collidingUser->getAuthIdentifier())
+                ->and($payload['duplicate'])->toBeFalse()
+                ->and($secondBuild->getKey())->not->toBe($firstBuild->getKey())
+                ->and($secondBuild->requested_by)->toBe($secondIdentifier)
+                ->and($firstBuild->requested_by)->toBe($firstIdentifier)
+                ->and(Build::query()->where('idempotency_key', $idempotencyKey)->count())->toBe(2)
+                ->and(Build::query()->where('requested_by', (string) $collidingUser->getAuthIdentifier())->exists())
+                ->toBeFalse();
+        },
+    );
 
     $report = (new FleetConformance($this))->assert(new ConsumerConformance(
         consumer: 'crate',

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanBuild\CrateServer\Mcp\Tools;
 
 use ArtisanBuild\BuiltForCloud\Console\ActingPrincipalResolver;
+use ArtisanBuild\BuiltForCloud\Exceptions\NoActingPrincipal;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolClassification;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolEffect;
 use ArtisanBuild\BuiltForCloud\Mcp\Classification;
@@ -41,13 +42,19 @@ final class TriggerBuildTool extends CrateMcpTool
 
     public function handle(Request $request, ActingPrincipalResolver $principals): Response
     {
+        $principal = $principals->require(request());
+        $identifier = $principal->identifier();
+
+        if ($identifier === null || $identifier === '') {
+            throw new NoActingPrincipal('The acting principal has no stable identifier.');
+        }
+
         $input = $this->validated($request, ['idempotency_key', 'repository_name'], [
             'idempotency_key' => ['required', 'string', 'min:1', 'max:191'],
             'repository_name' => ['sometimes', 'nullable', 'string', 'max:255'],
         ]);
         $repositoryName = $input['repository_name'] ?? null;
-        $identifier = $principals->resolve()->identifier();
-        $requestedBy = is_int($identifier) ? (string) $identifier : ($identifier ?? 'installation');
+        $requestedBy = (string) $identifier;
         $fingerprint = hash('sha256', json_encode([
             'repository_name' => $repositoryName,
         ], JSON_THROW_ON_ERROR));

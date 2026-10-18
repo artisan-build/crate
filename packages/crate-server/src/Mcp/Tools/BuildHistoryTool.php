@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\CrateServer\Mcp\Tools;
 
+use ArtisanBuild\BuiltForCloud\Console\ActingPrincipalResolver;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolClassification;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolEffect;
 use ArtisanBuild\BuiltForCloud\Mcp\Classification;
@@ -38,6 +39,8 @@ final class BuildHistoryTool extends CrateMcpTool
 
     public function handle(Request $request): Response
     {
+        app(ActingPrincipalResolver::class)->require(request());
+
         $input = $this->validated($request, ['cursor', 'limit', 'build_ids', 'repository_names', 'statuses'], [
             'cursor' => ['sometimes', 'nullable', 'string'],
             'limit' => ['sometimes', 'integer', 'between:1,100'],
