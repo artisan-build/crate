@@ -222,7 +222,7 @@ it('keeps installation Basic access independent of creator and authority mode', 
 it('refuses with the standard challenge when the configured guard is not a credential guard', function (): void {
     config()->set('built-for-cloud.credentials.guard', 'web');
 
-    crateServerAuthenticatedGet('/packages.json', 'any-secret')->assertUnauthorized();
+    assertCrateRegistryRefusal(crateServerAuthenticatedGet('/packages.json', 'any-secret'));
 });
 
 it('returns a 404 for a missing file with a valid credential', function (): void {
