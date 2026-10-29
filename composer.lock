@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "e1b11238fe690d848978746b3acff7ce",
+    "content-hash": "60294638cf2554111aebf82effa769b4",
     "packages": [
         {
             "name": "artisan-build/bfc-client",
@@ -70,16 +70,16 @@
         },
         {
             "name": "artisan-build/built-for-cloud",
-            "version": "v0.20.3",
+            "version": "v0.21.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/artisan-build/built-for-cloud.git",
-                "reference": "13eb91211607063e559c14e7d8d71ddb06b7e965"
+                "reference": "16469fa55163ed5c83a31514cede23ffbac99c24"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/artisan-build/built-for-cloud/zipball/13eb91211607063e559c14e7d8d71ddb06b7e965",
-                "reference": "13eb91211607063e559c14e7d8d71ddb06b7e965",
+                "url": "https://api.github.com/repos/artisan-build/built-for-cloud/zipball/16469fa55163ed5c83a31514cede23ffbac99c24",
+                "reference": "16469fa55163ed5c83a31514cede23ffbac99c24",
                 "shasum": ""
             },
             "require": {
@@ -142,9 +142,9 @@
             ],
             "support": {
                 "issues": "https://github.com/artisan-build/built-for-cloud/issues",
-                "source": "https://github.com/artisan-build/built-for-cloud/tree/v0.20.3"
+                "source": "https://github.com/artisan-build/built-for-cloud/tree/v0.21.0"
             },
-            "time": "2026-10-26T08:36:32+00:00"
+            "time": "2026-10-29T16:03:55+00:00"
         },
         {
             "name": "artisan-build/built-for-cloud-contracts",
@@ -318,10 +318,10 @@
             "dist": {
                 "type": "path",
                 "url": "packages/crate-server",
-                "reference": "456fb424a9c11259503c6c86084d71fde1779eaa"
+                "reference": "5defe7350c00b44d3c55702ba6689665cb8b8b1e"
             },
             "require": {
-                "artisan-build/built-for-cloud": "^0.20",
+                "artisan-build/built-for-cloud": "^0.21.0",
                 "artisan-build/crate-contracts": "^1.0",
                 "illuminate/bus": "^13.0",
                 "illuminate/console": "^13.0",
