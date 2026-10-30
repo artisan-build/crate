@@ -156,7 +156,7 @@ it('refuses an offboarded delegated subject before Crate data access or dispatch
 
 it('paginates more than one hundred repositories without skips or credential disclosure', function (): void {
     $sentinel = 'crate-source-credential-sentinel';
-    ServedRepo::factory()->count(105)->sequence(
+    $repositories = ServedRepo::factory()->count(105)->sequence(
         fn ($sequence): array => [
             'name' => sprintf('vendor/package-%03d', $sequence->index),
             'source_credential' => $sequence->index === 52 ? $sentinel : null,
@@ -172,7 +172,7 @@ it('paginates more than one hundred repositories without skips or credential dis
 
     expect($first['repositories'])->toHaveCount(100)
         ->and($second['repositories'])->toHaveCount(5)
-        ->and(array_column($rows, 'id'))->toBe(range(1, 105))
+        ->and(array_column($rows, 'id'))->toBe($repositories->modelKeys())
         ->and(array_unique(array_column($rows, 'id')))->toHaveCount(105)
         ->and(json_encode([$first, $second]))->not->toContain($sentinel)
         ->and($rows[52]['has_source_credential'])->toBeTrue()
@@ -202,7 +202,7 @@ it('paginates and filters more than one hundred builds with a stable descending 
     $alpha = ServedRepo::factory()->create(['name' => 'vendor/alpha']);
     $beta = ServedRepo::factory()->create(['name' => 'vendor/beta']);
 
-    Build::factory()->count(105)->sequence(
+    $builds = Build::factory()->count(105)->sequence(
         fn ($sequence): array => [
             'served_repo_id' => $sequence->index % 2 === 0 ? $alpha->getKey() : $beta->getKey(),
             'scope' => Build::SCOPE_REPOSITORY,
@@ -226,7 +226,7 @@ it('paginates and filters more than one hundred builds with a stable descending 
 
     expect($first['builds'])->toHaveCount(100)
         ->and($second['builds'])->toHaveCount(5)
-        ->and($ids)->toBe(range(105, 1))
+        ->and($ids)->toBe(array_reverse($builds->modelKeys()))
         ->and(array_unique($ids))->toHaveCount(105)
         ->and($filtered['builds'])->not->toBeEmpty();
 
