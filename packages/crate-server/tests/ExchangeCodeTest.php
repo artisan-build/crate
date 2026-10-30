@@ -8,6 +8,7 @@ use ArtisanBuild\BuiltForCloud\Console\ConsoleRole;
 use ArtisanBuild\BuiltForCloud\Console\DelegatedActor;
 use ArtisanBuild\BuiltForCloud\Console\DelegatedClaims;
 use ArtisanBuild\BuiltForCloud\Credential;
+use ArtisanBuild\BuiltForCloud\StandaloneAccess;
 use ArtisanBuild\BuiltForCloud\SubjectType;
 use ArtisanBuild\BuiltForCloud\User;
 use ArtisanBuild\BuiltForCloud\UserRole;
@@ -18,11 +19,13 @@ use ArtisanBuild\CrateServer\Models\ExchangeCode;
 use ArtisanBuild\CrateServer\RegistryAddress;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
 
 beforeEach(function (): void {
     config(['crate-server.url' => 'https://crate.example.test']);
+    URL::forceRootUrl('https://crate.example.test');
     Storage::fake('crate-archive');
     Storage::disk('crate-archive')->put('satis/packages.json', '{"packages":[]}');
     Storage::disk('crate-archive')->put('satis/p2/acme/private-package.json', '{"packages":{"acme/private-package":[]}}');
@@ -80,7 +83,7 @@ it('redeems a project code once into a COMPOSER_AUTH document the registry accep
     $auth = $this->post(route('crate.exchange.composer-auth', $issued->code))
         ->assertOk()
         ->assertHeader('Cache-Control', 'no-store, private')
-        ->json('http-basic.crate\.example\.test');
+        ->json('http-basic')['crate.example.test'];
 
     $this->post(route('crate.exchange.composer-auth', $issued->code))->assertNotFound();
 
@@ -105,7 +108,9 @@ it('refuses an expired code without minting', function (): void {
 
 it('connects a signed-in person’s machine with a one-line command bound to them', function (): void {
     $user = exchangeUser();
-    $this->actingAs($user);
+    $this->actingAs($user)->withSession([
+        StandaloneAccess::SESSION_VERSION_KEY => $user->auth_session_version,
+    ]);
 
     $this->get(route('crate.connect'))
         ->assertOk()
@@ -198,7 +203,7 @@ function exchangeUser(): User
         'email_verified_at' => now(),
     ])->save();
 
-    return $user;
+    return $user->refresh();
 }
 
 /** @return array<string, mixed> */

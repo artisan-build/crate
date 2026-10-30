@@ -20,6 +20,7 @@ use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Attributes\Name;
+use Laravel\Mcp\Server\Tools\Annotations\IsDestructive;
 
 /**
  * Issues a single-use exchange code for a project's CI or deployment Composer credential. The tool
@@ -28,6 +29,7 @@ use Laravel\Mcp\Server\Attributes\Name;
  */
 #[Name('create_project_credential')]
 #[Description('Create a single-use exchange code for a Composer credential owned by a project, for CI or deployments. Redeem it inside the same shell command that stores the result (a GitHub Actions secret, a Laravel Cloud or Forge environment variable). Never print, echo or log the redeemed value. Scalpels admins only.')]
+#[IsDestructive(false)]
 #[ToolClassification(Classification::Metadata)]
 #[ToolEffect(Effect::Write)]
 final class CreateProjectCredentialTool extends CrateMcpTool

@@ -42,6 +42,8 @@ use ArtisanBuild\CrateServer\Jobs\BuildSatis;
 use ArtisanBuild\CrateServer\Mcp\CrateReadMcpServer;
 use ArtisanBuild\CrateServer\Mcp\CrateWriteMcpServer;
 use ArtisanBuild\CrateServer\Mcp\Tools\BuildHistoryTool;
+use ArtisanBuild\CrateServer\Mcp\Tools\ComposerRepositoryTool;
+use ArtisanBuild\CrateServer\Mcp\Tools\CreateProjectCredentialTool;
 use ArtisanBuild\CrateServer\Mcp\Tools\ServedRepositoriesTool;
 use ArtisanBuild\CrateServer\Mcp\Tools\TriggerBuildTool;
 use ArtisanBuild\CrateServer\Models\Build;
@@ -157,17 +159,18 @@ it('passes the unified auth consumer conformance spec', function (): void {
         ]),
         'mcp_delegated' => $sorted([
             BuildHistoryTool::class,
+            ComposerRepositoryTool::class,
             ServedRepositoriesTool::class,
         ]),
     ];
 
     McpDelegatedEnforcement::assertHonors(
         CrateReadMcpServer::class,
-        [ServedRepositoriesTool::class, BuildHistoryTool::class],
+        [ServedRepositoriesTool::class, BuildHistoryTool::class, ComposerRepositoryTool::class],
     );
     McpDelegatedEnforcement::assertHonors(
         CrateWriteMcpServer::class,
-        [TriggerBuildTool::class],
+        [TriggerBuildTool::class, CreateProjectCredentialTool::class],
         negativeAuthorization: static function (
             ActingPrincipal $first,
             ActingPrincipal $second,
