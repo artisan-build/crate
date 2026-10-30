@@ -80,8 +80,8 @@ it('exposes exact tool sets per HTTP door and refuses foreign or cross-door call
     sort($readTools);
     sort($writeTools);
 
-    expect($readTools)->toBe(['build_history', 'served_repositories'])
-        ->and($writeTools)->toBe(['trigger_build']);
+    expect($readTools)->toBe(['build_history', 'composer_repository', 'served_repositories'])
+        ->and($writeTools)->toBe(['create_project_credential', 'trigger_build']);
 
     crateMcpPost('/mcp', crateMcpCall('served_repositories'), $token)->assertOk();
     crateMcpPost('/mcp', crateMcpCall('build_history'), $token)->assertOk();

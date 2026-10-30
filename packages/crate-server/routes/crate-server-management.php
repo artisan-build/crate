@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use ArtisanBuild\CrateServer\Http\Controllers\BuildController;
+use ArtisanBuild\CrateServer\Http\Controllers\ConnectMachineController;
 use ArtisanBuild\CrateServer\Http\Controllers\RepositoryController;
 use Illuminate\Support\Facades\Route;
 
@@ -13,4 +14,6 @@ Route::prefix('crate')->name('crate.')->group(function (): void {
     Route::delete('/repositories/{name}/source-credential', [RepositoryController::class, 'clearSourceCredential'])->where('name', '.*')->name('repositories.source.clear');
     Route::delete('/repositories/{name}', [RepositoryController::class, 'destroy'])->where('name', '.*')->name('repositories.destroy');
     Route::get('/builds', [BuildController::class, 'index'])->name('builds.index');
+    Route::get('/connect', [ConnectMachineController::class, 'show'])->name('connect');
+    Route::post('/connect', [ConnectMachineController::class, 'store'])->name('connect.store');
 });

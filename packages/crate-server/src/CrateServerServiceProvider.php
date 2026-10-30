@@ -17,9 +17,12 @@ use ArtisanBuild\CrateServer\Contracts\RepositoryBuildMutex;
 use ArtisanBuild\CrateServer\Http\Middleware\EnsureValidCredential;
 use ArtisanBuild\CrateServer\Mcp\CrateReadMcpServer;
 use ArtisanBuild\CrateServer\Mcp\CrateWriteMcpServer;
+use Illuminate\Contracts\View\View as ViewContract;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schedule;
+use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\View\ComponentSlot;
 use Laravel\Mcp\Facades\Mcp;
 
 final class CrateServerServiceProvider extends ServiceProvider
@@ -41,6 +44,8 @@ final class CrateServerServiceProvider extends ServiceProvider
         ], 'crate-server-config');
 
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+        $this->loadViewsFrom(__DIR__.'/../resources/views', 'crate');
+        $this->shareSidebar();
 
         if ($this->app->bound('router')) {
             $this->app['router']->aliasMiddleware('crate-server.credential', EnsureValidCredential::class);
@@ -48,6 +53,7 @@ final class CrateServerServiceProvider extends ServiceProvider
 
         Route::middleware(['crate-server.credential'])->group(__DIR__.'/../routes/crate-server.php');
         Route::middleware(['web', 'bfc.auth'])->group(__DIR__.'/../routes/crate-server-management.php');
+        Route::middleware(['throttle:10,1'])->group(__DIR__.'/../routes/crate-server-exchange.php');
 
         $this->app->booted(function (): void {
             Mcp::web((string) config('crate-server.mcp.read_path', '/mcp'), CrateReadMcpServer::class)
@@ -70,6 +76,20 @@ final class CrateServerServiceProvider extends ServiceProvider
         $this->app->booted(function (): void {
             Schedule::command('crate:build --trigger=schedule')->daily();
             Schedule::command('crate:recover-builds')->everyMinute()->withoutOverlapping();
+        });
+    }
+
+    /** Give every shell page that brings no navigation of its own Crate's sidebar, so Connect is always one click away. */
+    private function shareSidebar(): void
+    {
+        View::composer('bfc::layout', function (ViewContract $view): void {
+            if ($view->offsetExists('sidebar')) {
+                return;
+            }
+
+            $view->with('sidebar', new ComponentSlot(View::make('crate::sidebar', [
+                'connectActive' => request()->routeIs('crate.connect', 'crate.connect.store'),
+            ])->render()));
         });
     }
 
